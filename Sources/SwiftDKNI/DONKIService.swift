@@ -34,6 +34,14 @@ final public class DONKIService: Sendable {
         }
         
         // 3. Decode the Payload
+        if let jsonString = String(data: data, encoding: .utf8) {
+            print("--- RAW JSON RESPONSE ---")
+            print(jsonString)
+            print("-------------------------")
+        } else {
+            print("DEBUG: Could not convert data to UTF-8 string.")
+        }
+
         let decoder = JSONDecoder()
         let events: [CMEEvent]
         do {
