@@ -26,7 +26,6 @@ final public class DONKIService: Sendable {
         }
         
         // 2. Perform the Network Request
-        print("U\(url.absoluteString)")
         let (data, response) = try await URLSession.shared.data(from: url)
         
         guard let httpResponse = response as? HTTPURLResponse, 
@@ -44,6 +43,7 @@ final public class DONKIService: Sendable {
         }
         
         // 4. Process and Average the Data
+        print("SwiftDNKI: found \(events.count) events")
         var processedEvents: [AveragedCMEData] = []
         
         for event in events {
