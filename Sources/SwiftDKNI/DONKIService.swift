@@ -31,6 +31,7 @@ final public class DONKIService: Sendable {
         
         guard let httpResponse = response as? HTTPURLResponse, 
               (200...299).contains(httpResponse.statusCode) else {
+            print("No data")
             throw CMEFetcherError.noData
         }
         
