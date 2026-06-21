@@ -60,7 +60,7 @@ extension SwiftDKNI {
             let safeIgnitionTime = max(0.0, ignitionOffset)
             
             // Generate the specialized node using the SCNSphere's exact physical radius
-            let cmeNode = renderer.createCoronalEjectionNode(
+            let cmeNode = try! renderer.createCoronalEjectionNode(
                 for: event,
                 pointCount: pointsPerEvent,
                 solarRadius: Float(sphere.radius)

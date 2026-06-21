@@ -19,82 +19,74 @@ final public class CMEFluxRopeRenderer: Sendable {
     ///   - event: The averaged CME data used to generate the boundary shell.
     ///   - solarRadius: The radius of the SCNSphere representing the Sun.
     /// - Returns: A fully configured SCNNode ready to be added to the scene.
-    func createCoronalEjectionNode(for event: AveragedCMEData, pointCount: Int, solarRadius: Float = 1.0) -> SCNNode {
+    /// Generates the complete SCNNode, loading the custom Metal shader from the Documents directory.
+    func createCoronalEjectionNode(for event: AveragedCMEData, pointCount: Int, solarRadius: Float = 1.0) throws -> SCNNode {
         
         // 1. Generate the base point cloud geometry
         let geometry = geometryBuilder.buildBoundaryShellAccelerated(
-            for: event, 
+            for: event,
             pointCount: pointCount,
             solarRadius: solarRadius
         )
         
-        // 2. Configure the Plasma Material
+        // 2. Create the Material & Program
         let material = SCNMaterial()
-        material.lightingModel = .constant       // Plasma emits its own light; ignores scene shadows
-        material.readsFromDepthBuffer = true     // Honors physical objects in front of it
-        material.writesToDepthBuffer = false     // Prevents point sprites from unnaturally occluding each other
-        material.blendMode = .add                // Additive blending creates the intense, bright plasma glow
+        let program = SCNProgram()
         
-        // 3. Attach the Vertex Shader Modifier
-        material.shaderModifiers = [
-            .geometry: getCoronalVertexShader()
-        ]
+        // 3. Load and Compile the Metal Script from Documents/stars
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw NSError(domain: "Metal", code: 0, userInfo: [NSLocalizedDescriptionKey: "Metal not supported"])
+        }
         
-        // 4. Bind the Custom Uniforms
-        // Map the real-world speed to a visual scale factor suitable for SceneKit coordinates
-        let visualSpeedScale: Float = 0.001 
-        let scaledSpeed = Float(event.speed) * visualSpeedScale
-        material.setValue(NSNumber(value: scaledSpeed), forKey: "u_speed")
+        let fileManager = FileManager.default
+        let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let shaderURL = documentsURL.appendingPathComponent("stars/coronal.metal")
         
-        // Convert the half-angle to radians for the Metal shader's trigonometric functions
-        let halfAngleRad = Float(event.halfAngle) * .pi / 180.0
-        material.setValue(NSNumber(value: halfAngleRad), forKey: "u_halfAngle")
+        let metalSource = try String(contentsOf: shaderURL, encoding: .utf8)
+        let library = try device.makeLibrary(source: metalSource, options: nil)
         
-        // Initialize the animation timer
-        material.setValue(NSNumber(value: 0.0), forKey: "u_time")
+        // Assign the compiled library to the SceneKit program
+        program.library = library
+        program.vertexFunctionName = "coronal_vertex_main"
+        program.fragmentFunctionName = "coronal_fragment_main"
+        
+        // 4. Map the Data Semantics explicitly
+        program.setSemantic(SCNGeometrySource.Semantic.vertex.rawValue, forSymbol: "in.position", options: nil)
+        program.setSemantic(SCNGeometrySource.Semantic.normal.rawValue, forSymbol: "in.normal", options: nil)
+        program.setSemantic(SCNModelViewProjectionTransform, forSymbol: "scn_node", options: nil)
+        
+        // 5. Configure Material properties for the glowing plasma effect
+        material.program = program
+        material.lightingModel = .constant
+        material.readsFromDepthBuffer = true
+        material.writesToDepthBuffer = false
+        material.blendMode = .add
+        
+        // Create a variation of thickness
+        var thickness: Float = 0.3 // 30% speed variance
+        material.setValue(Data(bytes: &thickness, count: MemoryLayout<Float>.size), forKey: "u_thickness")
+        // 6. Bind the Uniforms using Data payloads (required for SCNProgram)
+        // Global time will be updated continuously by your render loop
+        var initialTime: Float = 0.0
+        material.setValue(Data(bytes: &initialTime, count: MemoryLayout<Float>.size), forKey: "u_globalTime")
+        
+        // Ignition Time (Set to 0.0 here, updated by the alignment function later)
+        var ignitionTime: Float = 0.0
+        material.setValue(Data(bytes: &ignitionTime, count: MemoryLayout<Float>.size), forKey: "u_ignitionTime")
+        
+        // Speed
+        let visualSpeedScale: Float = 0.001
+        var scaledSpeed = Float(event.speed) * visualSpeedScale
+        material.setValue(Data(bytes: &scaledSpeed, count: MemoryLayout<Float>.size), forKey: "u_speed")
+        
+        // Half Angle
+        var halfAngleRad = Float(event.halfAngle) * .pi / 180.0
+        material.setValue(Data(bytes: &halfAngleRad, count: MemoryLayout<Float>.size), forKey: "u_halfAngle")
         
         geometry.materials = [material]
         
-        // 5. Wrap and return the node
-        let cmeNode = SCNNode(geometry: geometry)
-        return cmeNode
+        return SCNNode(geometry: geometry)
     }
     
-    /// Helper function providing the Metal vertex shader modifier string.
-    private func getCoronalVertexShader() -> String {
-        return """
-        // Declare the custom variables bound from Swift via material.setValue()
-        #pragma arguments
-        float u_time;
-        float u_speed;
-        float u_halfAngle;
-        
-        #pragma body
-        
-        // 1. Establish the alignment of the particle
-        // We use the default local Z-axis as the baseline unrotated center of the cap
-        float3 centerAxis = float3(0.0, 0.0, 1.0); 
-        
-        // Compare the particle's outward normal (baked in Swift) against the center axis
-        float alignment = dot(_geometry.normal, centerAxis);
-        
-        // 2. The Flux Rope Shaping Function
-        float edgeThreshold = cos(u_halfAngle);
-        float normalizedPosition = saturate((alignment - edgeThreshold) / (1.0 - edgeThreshold));
-        
-        // 3. Apply the morphology curve
-        // Taking the square root inflates the center into a bulbous apex while keeping the edges thin
-        float morphologyCurve = sqrt(normalizedPosition);
-        
-        // 4. Compute the expansion delta
-        // Particles at the apex (curve = 1.0) move at max u_speed. Legs (curve = 0.0) stay anchored.
-        float dynamicExpansion = u_speed * u_time * morphologyCurve;
-        
-        // 5. Transform the vertex outward along its normal
-        _geometry.position.xyz += _geometry.normal * dynamicExpansion;
-        
-        // Pass the structural density (morphology) to the fragment shader's alpha channel
-        _geometry.color = float4(1.0, 1.0, 1.0, morphologyCurve);
-        """
-    }
+    
 }
