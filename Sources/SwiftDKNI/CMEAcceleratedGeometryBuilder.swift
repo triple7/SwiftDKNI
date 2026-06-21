@@ -66,8 +66,8 @@ public final class CMEGeometryBuilder: Sendable {
         vDSP.multiply(sinTheta, sinPhi, result: &yLocal)
         
         // 3. Compute Rotation Alignment using simd matrix functions
-        let latRad = Float(event.latitude) * .pi / 180.0
-        let lonRad = Float(event.longitude) * .pi / 180.0
+        let latRad = Float(event.latitude!) * .pi / 180.0
+        let lonRad = Float(event.longitude!) * .pi / 180.0
         
         let targetX = cos(latRad) * cos(lonRad)
         let targetY = sin(latRad)

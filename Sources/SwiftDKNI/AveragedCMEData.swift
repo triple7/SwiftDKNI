@@ -14,8 +14,8 @@ public struct AveragedCMEData {
     let startTime: String
     
     // Core parameters averaged across accurate instrument readings
-    let latitude: Double
-    let longitude: Double
+    let latitude: Double?
+    let longitude: Double?
     let halfAngle: Double
     let speed: Double
 }
