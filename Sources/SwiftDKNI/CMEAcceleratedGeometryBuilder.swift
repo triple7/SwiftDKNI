@@ -27,34 +27,18 @@ public final class CMEGeometryBuilder: Sendable {
 
     func createMagneticLoopMaterial() -> SCNMaterial {
         let material = SCNMaterial()
-        
-        // 1. Ignore all scene lights; this object generates its own light
         material.lightingModel = .constant
         
-        // 2. Base Color: A very deep, hot magenta/orange
-        // We use NSColor (or UIColor on iOS) for basic emission
+        // By setting contents to pure white, we allow the vertex colors
+        // to pass through exactly as they are calculated.
         #if os(macOS)
-        let loopColor = NSColor(red: 1.0, green: 0.3, blue: 0.1, alpha: 1.0)
+        material.diffuse.contents = NSColor.white
         #else
-        let loopColor = UIColor(red: 1.0, green: 0.3, blue: 0.1, alpha: 1.0)
+        material.diffuse.contents = UIColor.white
         #endif
         
-        // Set both diffuse and emission to the same color
-        material.diffuse.contents = loopColor
-        material.emission.contents = loopColor
-        
-        // 3. Additive Blending
-        // When loops overlap, their colors are added together (Red + Green = Yellow/White).
-        // This creates the illusion of intense, volumetric heat at the base where lines cluster.
         material.blendMode = .add
-        
-        // 4. Ensure it renders correctly from all angles
         material.isDoubleSided = true
-        
-        // Optional: If you want to push the HDR values manually past 1.0
-        // to force your camera's bloom threshold to trigger hard:
-        // material.setValue(NSNumber(value: 2.5), forKey: "emissionIntensity")
-        
         return material
     }
 
@@ -63,30 +47,25 @@ public final class CMEGeometryBuilder: Sendable {
         let latRad = Float(event.latitude ?? 0.0) * .pi / 180.0
         let lonRad = Float(event.longitude ?? 0.0) * .pi / 180.0
         
-        // 1. Establish the exact center of the Active Region on the sphere
         let coreNormal = simd_float3(
             cos(latRad) * cos(lonRad),
             sin(latRad),
             cos(latRad) * sin(lonRad)
         )
         
-        // 2. Calculate local Tangent and Bitangent vectors to spread the loops around the core
         let up = abs(coreNormal.y) > 0.99 ? simd_float3(1, 0, 0) : simd_float3(0, 1, 0)
         let tangent = simd_normalize(simd_cross(up, coreNormal))
         let bitangent = simd_normalize(simd_cross(coreNormal, tangent))
         
         var vertices: [simd_float3] = []
+        var colors: [simd_float4] = [] // NEW: Array to hold RGBA values per point
         var indices: [Int32] = []
-        
         var currentIndex: Int32 = 0
         
-        // 3. Procedurally generate 'loopCount' magnetic arches
         for _ in 0..<loopCount {
-            // Randomize the footprint spread (how wide the base of the loop is)
             let footprintSpread = Float.random(in: 0.02...0.15)
             let angle = Float.random(in: 0...(2 * .pi))
             
-            // Offset the start and end points in opposite directions on the surface
             let offset = (tangent * cos(angle) + bitangent * sin(angle)) * footprintSpread
             
             var startPoint = simd_normalize(coreNormal + offset)
@@ -95,30 +74,36 @@ public final class CMEGeometryBuilder: Sendable {
             startPoint *= solarRadius
             endPoint *= solarRadius
             
-            // --- THE FIX: TIGHTER, LOWER CONTROL POINTS ---
-            // Reduced the speed scalar from 0.0005 to 0.0001
-            // Adjusted the random bounds from 0.5...1.5 down to 0.2...0.6
-            // This prevents the control point from stretching the curve into a sharp spike
             let loopHeight = Float(event.speed) * 0.0001 * Float.random(in: 0.2...0.6)
             
             var controlPoint = simd_normalize(coreNormal)
             controlPoint *= (solarRadius + loopHeight)
-            // ----------------------------------------------
             
-            // 4. Interpolate points along the loop using a Quadratic Bézier Curve
             for i in 0..<pointsPerLoop {
                 let t = Float(i) / Float(pointsPerLoop - 1)
                 let oneMinusT = 1.0 - t
                 
-                // Bézier math: P(t) = (1-t)^2*P0 + 2(1-t)t*P1 + t^2*P2
+                // 1. Geometry Math
                 let p0 = startPoint * (oneMinusT * oneMinusT)
                 let p1 = controlPoint * (2.0 * oneMinusT * t)
                 let p2 = endPoint * (t * t)
+                vertices.append(p0 + p1 + p2)
                 
-                let curvePoint = p0 + p1 + p2
-                vertices.append(curvePoint)
+                // --- NEW: TEMPERATURE & OPACITY GRADIENT MATH ---
+                // t = 0.0 is the start base, t = 1.0 is the end base, t = 0.5 is the apex.
+                // This normalizes the distance from the apex so 0 is the apex and 1 is the bases.
+                let distanceFromApex = abs(t - 0.5) * 2.0
                 
-                // Connect lines (0-1, 1-2, 2-3...)
+                // Base (Hot): Bright Yellow/White, 100% Opacity
+                // Apex (Cool): Deep Red, 30% Opacity
+                let r: Float = 1.0
+                let g: Float = 0.1 + (0.8 * distanceFromApex) // Dips to 0.1 at apex
+                let b: Float = 0.0 + (0.5 * distanceFromApex) // Dips to 0.0 at apex
+                let a: Float = 0.3 + (0.7 * distanceFromApex) // Dips to 30% opacity at apex
+                
+                colors.append(simd_float4(r, g, b, a))
+                // ------------------------------------------------
+                
                 if i > 0 {
                     indices.append(currentIndex - 1)
                     indices.append(currentIndex)
@@ -127,13 +112,21 @@ public final class CMEGeometryBuilder: Sendable {
             }
         }
         
-        // 5. Build SCNGeometry using Line segments
+        // Build Data blocks
         let vertexData = Data(bytes: vertices, count: vertices.count * MemoryLayout<simd_float3>.size)
+        let colorData = Data(bytes: colors, count: colors.count * MemoryLayout<simd_float4>.size) // NEW
         
         let vertexSource = SCNGeometrySource(
             data: vertexData, semantic: .vertex, vectorCount: vertices.count,
             usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size,
             dataOffset: 0, dataStride: MemoryLayout<simd_float3>.size
+        )
+        
+        // NEW: Tell SceneKit how to read the vertex colors
+        let colorSource = SCNGeometrySource(
+            data: colorData, semantic: .color, vectorCount: colors.count,
+            usesFloatComponents: true, componentsPerVector: 4, bytesPerComponent: MemoryLayout<Float>.size,
+            dataOffset: 0, dataStride: MemoryLayout<simd_float4>.size
         )
         
         let indexData = Data(bytes: indices, count: indices.count * MemoryLayout<Int32>.size)
@@ -142,7 +135,8 @@ public final class CMEGeometryBuilder: Sendable {
             bytesPerIndex: MemoryLayout<Int32>.size
         )
         
-        return SCNGeometry(sources: [vertexSource], elements: [element])
+        // Add the colorSource to the geometry return
+        return SCNGeometry(sources: [vertexSource, colorSource], elements: [element])
     }
 
     func buildBoundaryShellAccelerated(for event: AveragedCMEData, pointCount: Int = 10000, solarRadius: Float = 1.0) -> SCNGeometry {
