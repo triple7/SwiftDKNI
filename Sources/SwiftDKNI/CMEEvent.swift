@@ -48,3 +48,18 @@ public struct CMEAnalysis: Codable {
 public struct LinkedEvent: Codable {
     let activityID: String
 }
+
+
+extension AveragedCMEData { // (or whatever struct you put this in)
+    /// Safely parses the NASA DONKI ISO8601 string into a Swift Date object
+    var parsedDate: Date? {
+        let formatter = ISO8601DateFormatter()
+        
+        // DONKI typically formats strings exactly like: "2026-06-10T14:32Z"
+        formatter.formatOptions = [.withInternetDateTime]
+        
+        // Since startTime is already a guaranteed String, just pass it directly
+        return formatter.date(from: self.startTime)
+    }
+}
+
