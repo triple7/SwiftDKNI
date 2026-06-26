@@ -51,6 +51,9 @@ extension SwiftDKNI {
             let backupISOFormatter = ISO8601DateFormatter()
             backupISOFormatter.formatOptions = [.withInternetDateTime]
             
+            // magnetic loop material across events
+            let geometryBuilder = CMEGeometryBuilder()
+            let magneticLoopMaterial = geometryBuilder.createMagneticLoopMaterial()
             // 4. Generate and align each event
             for event in events {
                 
@@ -91,6 +94,9 @@ extension SwiftDKNI {
                 }
                 
                 coronalSurfaceNode.addChildNode(cmeNode)
+                
+                // Add the magnetic loops
+                let magneticLoopGeometry = geometryBuilder.buildMagneticLoops(for: event, solarRadius: Float(sphere.radius))
             }
             
             return coronalSurfaceNode

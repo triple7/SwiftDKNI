@@ -25,6 +25,122 @@ public final class CMEGeometryBuilder: Sendable {
         let baseAddress: UnsafeMutablePointer<T>
     }
 
+    func createMagneticLoopMaterial() -> SCNMaterial {
+        let material = SCNMaterial()
+        
+        // 1. Ignore all scene lights; this object generates its own light
+        material.lightingModel = .constant
+        
+        // 2. Base Color: A very deep, hot magenta/orange
+        // We use NSColor (or UIColor on iOS) for basic emission
+        #if os(macOS)
+        let loopColor = NSColor(red: 1.0, green: 0.3, blue: 0.1, alpha: 1.0)
+        #else
+        let loopColor = UIColor(red: 1.0, green: 0.3, blue: 0.1, alpha: 1.0)
+        #endif
+        
+        // Set both diffuse and emission to the same color
+        material.diffuse.contents = loopColor
+        material.emission.contents = loopColor
+        
+        // 3. Additive Blending
+        // When loops overlap, their colors are added together (Red + Green = Yellow/White).
+        // This creates the illusion of intense, volumetric heat at the base where lines cluster.
+        material.blendMode = .add
+        
+        // 4. Ensure it renders correctly from all angles
+        material.isDoubleSided = true
+        
+        // Optional: If you want to push the HDR values manually past 1.0
+        // to force your camera's bloom threshold to trigger hard:
+        // material.setValue(NSNumber(value: 2.5), forKey: "emissionIntensity")
+        
+        return material
+    }
+
+    func buildMagneticLoops(for event: AveragedCMEData, loopCount: Int = 40, pointsPerLoop: Int = 50, solarRadius: Float = 1.0) -> SCNGeometry {
+        
+        let latRad = Float(event.latitude ?? 0.0) * .pi / 180.0
+        let lonRad = Float(event.longitude ?? 0.0) * .pi / 180.0
+        
+        // 1. Establish the exact center of the Active Region on the sphere
+        let coreNormal = simd_float3(
+            cos(latRad) * cos(lonRad),
+            sin(latRad),
+            cos(latRad) * sin(lonRad)
+        )
+        
+        // 2. Calculate local Tangent and Bitangent vectors to spread the loops around the core
+        let up = abs(coreNormal.y) > 0.99 ? simd_float3(1, 0, 0) : simd_float3(0, 1, 0)
+        let tangent = simd_normalize(simd_cross(up, coreNormal))
+        let bitangent = simd_normalize(simd_cross(coreNormal, tangent))
+        
+        var vertices: [simd_float3] = []
+        var indices: [Int32] = []
+        
+        var currentIndex: Int32 = 0
+        
+        // 3. Procedurally generate 'loopCount' magnetic arches
+        for _ in 0..<loopCount {
+            // Randomize the footprint spread (how wide the base of the loop is)
+            let footprintSpread = Float.random(in: 0.02...0.15)
+            let angle = Float.random(in: 0...(2 * .pi))
+            
+            // Offset the start and end points in opposite directions on the surface
+            let offset = (tangent * cos(angle) + bitangent * sin(angle)) * footprintSpread
+            
+            var startPoint = simd_normalize(coreNormal + offset)
+            var endPoint = simd_normalize(coreNormal - offset)
+            
+            startPoint *= solarRadius
+            endPoint *= solarRadius
+            
+            // Define the Control Point (pushes the loop outward into space)
+            // We use the DONKI speed to scale the height of the magnetic loops
+            let loopHeight = Float(event.speed) * 0.0005 * Float.random(in: 0.5...1.5)
+            var controlPoint = simd_normalize(coreNormal)
+            controlPoint *= (solarRadius + loopHeight)
+            
+            // 4. Interpolate points along the loop using a Quadratic Bézier Curve
+            for i in 0..<pointsPerLoop {
+                let t = Float(i) / Float(pointsPerLoop - 1)
+                let oneMinusT = 1.0 - t
+                
+                // Bézier math: P(t) = (1-t)^2*P0 + 2(1-t)t*P1 + t^2*P2
+                let p0 = startPoint * (oneMinusT * oneMinusT)
+                let p1 = controlPoint * (2.0 * oneMinusT * t)
+                let p2 = endPoint * (t * t)
+                
+                let curvePoint = p0 + p1 + p2
+                vertices.append(curvePoint)
+                
+                // Connect lines (0-1, 1-2, 2-3...)
+                if i > 0 {
+                    indices.append(currentIndex - 1)
+                    indices.append(currentIndex)
+                }
+                currentIndex += 1
+            }
+        }
+        
+        // 5. Build SCNGeometry using Line segments
+        let vertexData = Data(bytes: vertices, count: vertices.count * MemoryLayout<simd_float3>.size)
+        
+        let vertexSource = SCNGeometrySource(
+            data: vertexData, semantic: .vertex, vectorCount: vertices.count,
+            usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size,
+            dataOffset: 0, dataStride: MemoryLayout<simd_float3>.size
+        )
+        
+        let indexData = Data(bytes: indices, count: indices.count * MemoryLayout<Int32>.size)
+        let element = SCNGeometryElement(
+            data: indexData, primitiveType: .line, primitiveCount: indices.count / 2,
+            bytesPerIndex: MemoryLayout<Int32>.size
+        )
+        
+        return SCNGeometry(sources: [vertexSource], elements: [element])
+    }
+
     func buildBoundaryShellAccelerated(for event: AveragedCMEData, pointCount: Int = 10000, solarRadius: Float = 1.0) -> SCNGeometry {
         
         // 1. Generate uniform random distribution vectors (Now including 'w' for volumetric depth)
