@@ -37,6 +37,7 @@ public final class CMEGeometryBuilder: Sendable {
         
         material.blendMode = .add
         material.isDoubleSided = true
+        material.writesToDepthBuffer = false
         
         // --- NEW: THE FLOW SHADER ---
         let flowShader = """
@@ -57,7 +58,7 @@ public final class CMEGeometryBuilder: Sendable {
         
         // 5. Sharpen the pulse using a power curve. 
         // An exponent of 8.0 makes a tight, bright head with a fast-fading tail.
-        float pulse = pow(tail, 8.0);
+        float pulse = max(0.1, pow(tail, 8.0));
         
         // 6. Apply the mask to the existing vertex colors
         _surface.emission *= pulse;
