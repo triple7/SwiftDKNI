@@ -95,11 +95,15 @@ public final class CMEGeometryBuilder: Sendable {
             startPoint *= solarRadius
             endPoint *= solarRadius
             
-            // Define the Control Point (pushes the loop outward into space)
-            // We use the DONKI speed to scale the height of the magnetic loops
-            let loopHeight = Float(event.speed) * 0.0005 * Float.random(in: 0.5...1.5)
+            // --- THE FIX: TIGHTER, LOWER CONTROL POINTS ---
+            // Reduced the speed scalar from 0.0005 to 0.0001
+            // Adjusted the random bounds from 0.5...1.5 down to 0.2...0.6
+            // This prevents the control point from stretching the curve into a sharp spike
+            let loopHeight = Float(event.speed) * 0.0001 * Float.random(in: 0.2...0.6)
+            
             var controlPoint = simd_normalize(coreNormal)
             controlPoint *= (solarRadius + loopHeight)
+            // ----------------------------------------------
             
             // 4. Interpolate points along the loop using a Quadratic Bézier Curve
             for i in 0..<pointsPerLoop {
