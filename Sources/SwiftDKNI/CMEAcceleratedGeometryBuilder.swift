@@ -42,17 +42,15 @@ public final class CMEGeometryBuilder: Sendable {
         let flowShader = """
         #pragma transparent
         
-        // 1. Read the custom 'address' we assigned to this vertex
-        float trackPosition = in.texCoords[0].x;
-        float phaseOffset = in.texCoords[0].y;
+        // 1. Read the custom UV track using SceneKit's Metal surface struct
+        float trackPosition = _surface.diffuseTexcoord.x;
+        float phaseOffset = _surface.diffuseTexcoord.y;
         
         // 2. Control the speed of the plasma flow
         float speed = 0.6; 
         
-        // 3. The Math: u_time is automatically provided by SceneKit.
-        // 'fract' wraps the number between 0.0 and 1.0, creating an infinite loop.
-        // As time increases, the active position slides from 0.0 to 1.0.
-        float flow = fract(trackPosition - (u_time * speed) + phaseOffset);
+        // 3. The Math: Metal uses scn_frame.time instead of old GLSL u_time
+        float flow = fract(trackPosition - (scn_frame.time * speed) + phaseOffset);
         
         // 4. Shape the "Pulse". We invert the flow so the head is 1.0 and the tail fades to 0.0
         float tail = 1.0 - flow;
