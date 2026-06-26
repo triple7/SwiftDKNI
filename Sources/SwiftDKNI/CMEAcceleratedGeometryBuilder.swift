@@ -29,8 +29,6 @@ public final class CMEGeometryBuilder: Sendable {
         let material = SCNMaterial()
         material.lightingModel = .constant
         
-        // By setting contents to pure white, we allow the vertex colors
-        // to pass through exactly as they are calculated.
         #if os(macOS)
         material.diffuse.contents = NSColor.white
         #else
@@ -39,6 +37,38 @@ public final class CMEGeometryBuilder: Sendable {
         
         material.blendMode = .add
         material.isDoubleSided = true
+        
+        // --- NEW: THE FLOW SHADER ---
+        let flowShader = """
+        #pragma transparent
+        
+        // 1. Read the custom 'address' we assigned to this vertex
+        float trackPosition = in.texCoords[0].x;
+        float phaseOffset = in.texCoords[0].y;
+        
+        // 2. Control the speed of the plasma flow
+        float speed = 0.6; 
+        
+        // 3. The Math: u_time is automatically provided by SceneKit.
+        // 'fract' wraps the number between 0.0 and 1.0, creating an infinite loop.
+        // As time increases, the active position slides from 0.0 to 1.0.
+        float flow = fract(trackPosition - (u_time * speed) + phaseOffset);
+        
+        // 4. Shape the "Pulse". We invert the flow so the head is 1.0 and the tail fades to 0.0
+        float tail = 1.0 - flow;
+        
+        // 5. Sharpen the pulse using a power curve. 
+        // An exponent of 8.0 makes a tight, bright head with a fast-fading tail.
+        float pulse = pow(tail, 8.0);
+        
+        // 6. Apply the mask to the existing vertex colors
+        _surface.emission *= pulse;
+        _surface.transparent.a *= pulse;
+        """
+        
+        // Inject the shader into the surface rendering pass
+        material.shaderModifiers = [.surface: flowShader]
+        
         return material
     }
 
@@ -58,51 +88,51 @@ public final class CMEGeometryBuilder: Sendable {
         let bitangent = simd_normalize(simd_cross(coreNormal, tangent))
         
         var vertices: [simd_float3] = []
-        var colors: [simd_float4] = [] // NEW: Array to hold RGBA values per point
+        var colors: [simd_float4] = []
+        var uvs: [simd_float2] = [] // NEW: Texture coordinates to act as the "track"
         var indices: [Int32] = []
         var currentIndex: Int32 = 0
         
         for _ in 0..<loopCount {
             let footprintSpread = Float.random(in: 0.02...0.15)
             let angle = Float.random(in: 0...(2 * .pi))
-            
             let offset = (tangent * cos(angle) + bitangent * sin(angle)) * footprintSpread
             
             var startPoint = simd_normalize(coreNormal + offset)
             var endPoint = simd_normalize(coreNormal - offset)
-            
             startPoint *= solarRadius
             endPoint *= solarRadius
             
             let loopHeight = Float(event.speed) * 0.0001 * Float.random(in: 0.2...0.6)
-            
             var controlPoint = simd_normalize(coreNormal)
             controlPoint *= (solarRadius + loopHeight)
+            
+            // NEW: Randomize animation start time and flow direction for each loop
+            let phaseOffset = Float.random(in: 0.0...1.0)
+            let flowsForward = Bool.random()
             
             for i in 0..<pointsPerLoop {
                 let t = Float(i) / Float(pointsPerLoop - 1)
                 let oneMinusT = 1.0 - t
                 
-                // 1. Geometry Math
+                // Geometry Math
                 let p0 = startPoint * (oneMinusT * oneMinusT)
                 let p1 = controlPoint * (2.0 * oneMinusT * t)
                 let p2 = endPoint * (t * t)
                 vertices.append(p0 + p1 + p2)
                 
-                // --- NEW: TEMPERATURE & OPACITY GRADIENT MATH ---
-                // t = 0.0 is the start base, t = 1.0 is the end base, t = 0.5 is the apex.
-                // This normalizes the distance from the apex so 0 is the apex and 1 is the bases.
+                // Temperature Gradient (Apex is at t=0.5)
                 let distanceFromApex = abs(t - 0.5) * 2.0
-                
-                // Base (Hot): Bright Yellow/White, 100% Opacity
-                // Apex (Cool): Deep Red, 30% Opacity
                 let r: Float = 1.0
-                let g: Float = 0.1 + (0.8 * distanceFromApex) // Dips to 0.1 at apex
-                let b: Float = 0.0 + (0.5 * distanceFromApex) // Dips to 0.0 at apex
-                let a: Float = 0.3 + (0.7 * distanceFromApex) // Dips to 30% opacity at apex
-                
+                let g: Float = 0.1 + (0.8 * distanceFromApex)
+                let b: Float = 0.0 + (0.5 * distanceFromApex)
+                let a: Float = 0.3 + (0.7 * distanceFromApex)
                 colors.append(simd_float4(r, g, b, a))
-                // ------------------------------------------------
+                
+                // NEW: Set the UV address for the Shader.
+                // X is the position on the track, Y is the random start time delay.
+                let trackPosition = flowsForward ? t : (1.0 - t)
+                uvs.append(simd_float2(trackPosition, phaseOffset))
                 
                 if i > 0 {
                     indices.append(currentIndex - 1)
@@ -112,9 +142,9 @@ public final class CMEGeometryBuilder: Sendable {
             }
         }
         
-        // Build Data blocks
         let vertexData = Data(bytes: vertices, count: vertices.count * MemoryLayout<simd_float3>.size)
-        let colorData = Data(bytes: colors, count: colors.count * MemoryLayout<simd_float4>.size) // NEW
+        let colorData = Data(bytes: colors, count: colors.count * MemoryLayout<simd_float4>.size)
+        let uvData = Data(bytes: uvs, count: uvs.count * MemoryLayout<simd_float2>.size) // NEW
         
         let vertexSource = SCNGeometrySource(
             data: vertexData, semantic: .vertex, vectorCount: vertices.count,
@@ -122,11 +152,17 @@ public final class CMEGeometryBuilder: Sendable {
             dataOffset: 0, dataStride: MemoryLayout<simd_float3>.size
         )
         
-        // NEW: Tell SceneKit how to read the vertex colors
         let colorSource = SCNGeometrySource(
             data: colorData, semantic: .color, vectorCount: colors.count,
             usesFloatComponents: true, componentsPerVector: 4, bytesPerComponent: MemoryLayout<Float>.size,
             dataOffset: 0, dataStride: MemoryLayout<simd_float4>.size
+        )
+        
+        // NEW: Tell SceneKit about our UV track
+        let uvSource = SCNGeometrySource(
+            data: uvData, semantic: .texcoord, vectorCount: uvs.count,
+            usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size,
+            dataOffset: 0, dataStride: MemoryLayout<simd_float2>.size
         )
         
         let indexData = Data(bytes: indices, count: indices.count * MemoryLayout<Int32>.size)
@@ -135,8 +171,7 @@ public final class CMEGeometryBuilder: Sendable {
             bytesPerIndex: MemoryLayout<Int32>.size
         )
         
-        // Add the colorSource to the geometry return
-        return SCNGeometry(sources: [vertexSource, colorSource], elements: [element])
+        return SCNGeometry(sources: [vertexSource, colorSource, uvSource], elements: [element])
     }
 
     func buildBoundaryShellAccelerated(for event: AveragedCMEData, pointCount: Int = 10000, solarRadius: Float = 1.0) -> SCNGeometry {
