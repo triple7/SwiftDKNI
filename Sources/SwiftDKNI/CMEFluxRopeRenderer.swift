@@ -34,11 +34,14 @@ final public class CMEFluxRopeRenderer: Sendable {
         
         let fileManager = FileManager.default
         let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let shaderURL = documentsURL.appendingPathComponent("stars/coronal.metal")
-        let metalSource = try String(contentsOf: shaderURL, encoding: .utf8)
-
-        // 3. Inject directly into the standard pipeline
-        material.shaderModifiers = [.fragment: metalSource]
+        let geometryShaderURL = documentsURL.appendingPathComponent("stars/coronal_geometry.metal")
+        let fragmentShaderURL = documentsURL.appendingPathComponent("stars/coronal_fragment.metal")
+        let geometrySource = try String(contentsOf: geometryShaderURL, encoding: .utf8)
+        let fragmentSource = try String(contentsOf: fragmentShaderURL, encoding: .utf8)
+        material.shaderModifiers = [
+            .geometry: geometrySource,
+            .fragment: fragmentSource
+        ]
         material.blendMode = .add
         material.lightingModel = .constant
         material.readsFromDepthBuffer = true
