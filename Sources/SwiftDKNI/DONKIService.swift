@@ -26,7 +26,6 @@ final public class DONKIService: Sendable {
         }
         
         // 2. Perform the Network Request
-        print(url.absoluteString)
         let (data, response) = try await URLSession.shared.data(from: url)
         
         guard let httpResponse = response as? HTTPURLResponse, 

@@ -29,64 +29,42 @@ final public class CMEFluxRopeRenderer: Sendable {
             solarRadius: solarRadius
         )
         
-        // 2. Create the Material & Program
+        // 2. Create the Material
         let material = SCNMaterial()
-        let program = SCNProgram()
-        
-        // 3. Load and Compile the Metal Script from Documents/stars
-        guard let device = MTLCreateSystemDefaultDevice() else {
-            throw NSError(domain: "Metal", code: 0, userInfo: [NSLocalizedDescriptionKey: "Metal not supported"])
-        }
         
         let fileManager = FileManager.default
         let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let shaderURL = documentsURL.appendingPathComponent("stars/coronal.metal")
-        
         let metalSource = try String(contentsOf: shaderURL, encoding: .utf8)
-        let library = try device.makeLibrary(source: metalSource, options: nil)
-        
-        // Assign the compiled library to the SceneKit program
-        program.library = library
-        program.vertexFunctionName = "coronal_vertex_main"
-        program.fragmentFunctionName = "coronal_fragment_main"
-        
-        // 4. Map the Data Semantics explicitly
-        program.setSemantic(SCNGeometrySource.Semantic.vertex.rawValue, forSymbol: "in.position", options: nil)
-        program.setSemantic(SCNGeometrySource.Semantic.normal.rawValue, forSymbol: "in.normal", options: nil)
-        program.setSemantic(SCNModelViewProjectionTransform, forSymbol: "scn_node", options: nil)
-        
-        // 5. Configure Material properties for the glowing plasma effect
-        material.program = program
+
+        // 3. Inject directly into the standard pipeline
+        material.shaderModifiers = [.fragment: metalSource]
+        material.blendMode = .add
         material.lightingModel = .constant
         material.readsFromDepthBuffer = true
         material.writesToDepthBuffer = false
-        material.blendMode = .add
         
-        // Create a variation of thickness
-        var thickness: Float = 0.3 // 30% speed variance
-        material.setValue(Data(bytes: &thickness, count: MemoryLayout<Float>.size), forKey: "u_thickness")
-        // 6. Bind the Uniforms using Data payloads (required for SCNProgram)
-        // Global time will be updated continuously by your render loop
-        var initialTime: Float = 0.0
-        material.setValue(Data(bytes: &initialTime, count: MemoryLayout<Float>.size), forKey: "u_globalTime")
+        // 4. Bind Uniforms natively (No Data buffers required)
+        // Make sure these keys EXACTLY match the names in your #pragma arguments block
         
-        // Ignition Time (Set to 0.0 here, updated by the alignment function later)
-        var ignitionTime: Float = 0.0
-        material.setValue(Data(bytes: &ignitionTime, count: MemoryLayout<Float>.size), forKey: "u_ignitionTime")
+        let thickness: Float = 0.3
+        material.setValue(thickness, forKey: "u_thickness")
         
-        // Speed
+        let initialTime: Float = 0.0
+        material.setValue(initialTime, forKey: "u_globalTime")
+        
+        let ignitionTime: Float = 0.0
+        material.setValue(ignitionTime, forKey: "u_ignitionTime")
+        
         let visualSpeedScale: Float = 0.001
-        var scaledSpeed = Float(event.speed) * visualSpeedScale
-        material.setValue(Data(bytes: &scaledSpeed, count: MemoryLayout<Float>.size), forKey: "u_speed")
+        let scaledSpeed = Float(event.speed) * visualSpeedScale
+        material.setValue(scaledSpeed, forKey: "u_speed")
         
-        // Half Angle
-        var halfAngleRad = Float(event.halfAngle) * .pi / 180.0
-        material.setValue(Data(bytes: &halfAngleRad, count: MemoryLayout<Float>.size), forKey: "u_halfAngle")
+        let halfAngleRad = Float(event.halfAngle) * .pi / 180.0
+        material.setValue(halfAngleRad, forKey: "u_halfAngle")
         
         geometry.materials = [material]
         
         return SCNNode(geometry: geometry)
     }
-    
-    
 }
