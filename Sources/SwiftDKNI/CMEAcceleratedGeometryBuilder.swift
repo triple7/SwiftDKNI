@@ -27,14 +27,16 @@ public final class CMEGeometryBuilder: Sendable {
 
     func buildBoundaryShellAccelerated(for event: AveragedCMEData, pointCount: Int = 10000, solarRadius: Float = 1.0) -> SCNGeometry {
         
-        // 1. Generate uniform random distribution vectors
+        // 1. Generate uniform random distribution vectors (Now including 'w' for volumetric depth)
         let u = (0..<pointCount).map { _ in Float.random(in: 0...1) }
         let v = (0..<pointCount).map { _ in Float.random(in: 0...1) }
+        let w = (0..<pointCount).map { _ in Float.random(in: 0...1) } // The radial depth factor
         
         // Pre-allocate destination buffers
         var zLocal = [Float](repeating: 0.0, count: pointCount)
         var xLocal = [Float](repeating: 0.0, count: pointCount)
         var yLocal = [Float](repeating: 0.0, count: pointCount)
+        var radii  = [Float](repeating: 0.0, count: pointCount)
         
         let halfAngleRad = Float(event.halfAngle) * .pi / 180.0
         let cosMaxAngle = cos(halfAngleRad)
@@ -46,7 +48,7 @@ public final class CMEGeometryBuilder: Sendable {
         // phi = u * 2 * pi
         let phi = vDSP.multiply(twoPi, u)
         
-        // Vectorized trigonometric calculations over the entire buffer via vForce
+        // Vectorized trigonometric calculations
         let sinPhi = vForce.sin(phi)
         let cosPhi = vForce.cos(phi)
         
@@ -56,7 +58,6 @@ public final class CMEGeometryBuilder: Sendable {
         
         // sinTheta = sqrt(1.0 - zLocal^2)
         let zSquared = vDSP.square(zLocal)
-        // Multiply by -1.0 then add 1.0 to efficiently calculate (1.0 - zLocal^2) without extra memory allocation
         let negativeZSquared = vDSP.multiply(-1.0, zSquared)
         let oneMinusZSquared = vDSP.add(1.0, negativeZSquared)
         let sinTheta = vForce.sqrt(oneMinusZSquared)
@@ -65,9 +66,19 @@ public final class CMEGeometryBuilder: Sendable {
         vDSP.multiply(sinTheta, cosPhi, result: &xLocal)
         vDSP.multiply(sinTheta, sinPhi, result: &yLocal)
         
+        // --- THE FIX: VOLUMETRIC RADIAL DISTRIBUTION ---
+        // Use the DONKI CME speed to determine the physical height of the flare
+        let visualSpeedScale: Float = 0.001
+        let cmeHeight = Float(event.speed) * visualSpeedScale
+        
+        // radii = solarRadius + (w * cmeHeight)
+        // This pushes the points out of the 2D surface and fills the 3D cone volume
+        vDSP.multiply(cmeHeight, w, result: &radii)
+        vDSP.add(solarRadius, radii, result: &radii)
+        
         // 3. Compute Rotation Alignment using simd matrix functions
-        let latRad = Float(event.latitude!) * .pi / 180.0
-        let lonRad = Float(event.longitude!) * .pi / 180.0
+        let latRad = Float(event.latitude ?? 0.0) * .pi / 180.0
+        let lonRad = Float(event.longitude ?? 0.0) * .pi / 180.0
         
         let targetX = cos(latRad) * cos(lonRad)
         let targetY = sin(latRad)
@@ -76,7 +87,6 @@ public final class CMEGeometryBuilder: Sendable {
         let defaultAxis = simd_float3(0, 0, 1)
         let targetAxis = simd_float3(targetX, targetY, targetZ)
 
-        // Initialize the quaternion directly using the native Swift struct
         let quaternion = simd_quatf(from: defaultAxis, to: targetAxis)
         let rotationMatrix = simd_matrix3x3(quaternion)
         
@@ -84,22 +94,18 @@ public final class CMEGeometryBuilder: Sendable {
         var vertices = [simd_float3](repeating: simd_float3(0, 0, 0), count: pointCount)
         var normals = [simd_float3](repeating: simd_float3(0, 0, 0), count: pointCount)
         
-        // 4. Parallel batch transformation across CPU cores (Strict Concurrency Safe)
-        
-        // Shadow the mutable arrays as immutable constants so threads can read them safely
+        // 4. Parallel batch transformation across CPU cores
         let safeX = xLocal
         let safeY = yLocal
         let safeZ = zLocal
+        let safeRadii = radii // Pass the pre-calculated radial depths
         
-        // Request direct memory pointers to bypass the compiler's mutation block
         vertices.withUnsafeMutableBufferPointer { vBuffer in
             normals.withUnsafeMutableBufferPointer { nBuffer in
                 
-                // Extract the raw base addresses (ensure they exist)
                 guard let vBase = vBuffer.baseAddress,
                       let nBase = nBuffer.baseAddress else { return }
                 
-                // Wrap the pointers in our @unchecked Sendable struct
                 let vConcurrent = ConcurrentPointer(baseAddress: vBase)
                 let nConcurrent = ConcurrentPointer(baseAddress: nBase)
                 
@@ -108,9 +114,11 @@ public final class CMEGeometryBuilder: Sendable {
                     let localVec = simd_float3(safeX[idx], safeY[idx], safeZ[idx])
                     let alignedDirection = rotationMatrix * localVec
                     
-                    // Write directly to the memory addresses via the safe wrappers
+                    // Write directly to memory
                     nConcurrent.baseAddress[idx] = alignedDirection
-                    vConcurrent.baseAddress[idx] = alignedDirection * solarRadius
+                    
+                    // Multiply by the unique radius, not the flat solarRadius!
+                    vConcurrent.baseAddress[idx] = alignedDirection * safeRadii[idx]
                 }
             }
         }
@@ -120,40 +128,27 @@ public final class CMEGeometryBuilder: Sendable {
         let normalData = Data(bytes: normals, count: pointCount * MemoryLayout<simd_float3>.size)
         
         let vertexSource = SCNGeometrySource(
-            data: vertexData,
-            semantic: .vertex,
-            vectorCount: pointCount,
-            usesFloatComponents: true,
-            componentsPerVector: 3,
-            bytesPerComponent: MemoryLayout<Float>.size,
-            dataOffset: 0,
-            dataStride: MemoryLayout<simd_float3>.size
+            data: vertexData, semantic: .vertex, vectorCount: pointCount,
+            usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size,
+            dataOffset: 0, dataStride: MemoryLayout<simd_float3>.size
         )
         
         let normalSource = SCNGeometrySource(
-            data: normalData,
-            semantic: .normal,
-            vectorCount: pointCount,
-            usesFloatComponents: true,
-            componentsPerVector: 3,
-            bytesPerComponent: MemoryLayout<Float>.size,
-            dataOffset: 0,
-            dataStride: MemoryLayout<simd_float3>.size
+            data: normalData, semantic: .normal, vectorCount: pointCount,
+            usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size,
+            dataOffset: 0, dataStride: MemoryLayout<simd_float3>.size
         )
         
         let indices = Array(0..<Int32(pointCount))
         let indexData = Data(bytes: indices, count: indices.count * MemoryLayout<Int32>.size)
         
         let element = SCNGeometryElement(
-            data: indexData,
-            primitiveType: .point,
-            primitiveCount: pointCount,
+            data: indexData, primitiveType: .point, primitiveCount: pointCount,
             bytesPerIndex: MemoryLayout<Int32>.size
         )
         
         return SCNGeometry(sources: [vertexSource, normalSource], elements: [element])
     }
-    
 
     // Helper to generate a constant array of 1.0s for vectorized subtraction
     private func positiveOneArray(count: Int) -> [Float] {
