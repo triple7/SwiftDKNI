@@ -96,7 +96,11 @@ extension SwiftDKNI {
                 coronalSurfaceNode.addChildNode(cmeNode)
                 
                 // Add the magnetic loops
+                let magneticLoopNode = SCNNode()
                 let magneticLoopGeometry = geometryBuilder.buildMagneticLoops(for: event, solarRadius: Float(sphere.radius))
+                magneticLoopGeometry.materials = [magneticLoopMaterial]
+                magneticLoopNode.geometry = magneticLoopGeometry
+                coronalSurfaceNode.addChildNode(magneticLoopNode)
             }
             
             return coronalSurfaceNode
