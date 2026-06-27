@@ -78,7 +78,11 @@ public final class CMEGeometryBuilder: Sendable {
             // --- Apply the temporal rotation offset ---
             let rotatedLon = calculateRotatedLongitude(originalLongitude: Float(event.longitude ?? 0.0), eventDate: event.parsedDate)
             let lonRad = rotatedLon * .pi / 180.0
-                
+        let timeInterval = Date().timeIntervalSince(event.parsedDate ?? Date())
+        let daysPassed = Float(timeInterval / 86400.0)
+        print("🎯 ROTATION TRACE | Days Ago: \(String(format: "%.1f", daysPassed)) | Orig Lon: \(event.longitude ?? 0.0) -> New Lon: \(String(format: "%.1f", rotatedLon))")
+        // ------------------------------
+        
             // --- NEW: 90-Degree Phase Shift (Align Earth to Camera Z-Axis) ---
             // Swapped sin(lonRad) and cos(lonRad) on the X and Z axes
             let coreNormal = simd_float3(
