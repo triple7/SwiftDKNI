@@ -116,7 +116,11 @@ extension SwiftDKNI {
             if let sunspotMask = generateSunspotTexture(from: activeRegions) {
                 if let baseMaterial = sphere.materials.first {
                     baseMaterial.lightingModel = .constant
-
+                    // Fetch the latest 2K image from SDO (AIA 171 is the classic, high-contrast gold plasma)
+                    let sdoService = NASASDOService()
+                    if let liveSunTexture = try? await sdoService.fetchLatestImage(wavelength: .aia171, resolution: 2048) {
+                        baseMaterial.diffuse.contents = liveSunTexture
+                    }
                     // The multiply blend creates the dark, high-contrast holes
                     baseMaterial.multiply.contents = sunspotMask
                     baseMaterial.multiply.intensity = 0.85 // Adjust for darkness
