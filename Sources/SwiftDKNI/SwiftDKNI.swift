@@ -200,16 +200,16 @@ extension SwiftDKNI {
                 float3 V = normalize(_surface.view); // FIXED: Apple uses '_surface.view'
                 float edgeFactor = 1.0 - max(0.0, dot(N, V));
 
-                // Create a smooth, exponential atmospheric haze curve towards the horizon
-                float atmosphericHaze = pow(edgeFactor, 4.0);
+                // Sharpens the curve: It keeps the atmosphere completely invisible on the front face,
+                // and forces it to swell up rapidly ONLY as it reaches the absolute edge.
+                float atmosphericHaze = pow(edgeFactor, 6.0); // Cranked from 4.0 to 6.0
 
                 // Blend the UV Band Data into the Haze
-                float3 atmosphereColor = float3(0.98, 0.90, 0.75); // Pale coronal plasma cream
-                float finalAtmosphereOpacity = atmosphericHaze * (0.3 + uvIntensity * 0.7);
+                float3 atmosphereColor = float3(0.98, 0.90, 0.75); 
+                float finalAtmosphereOpacity = atmosphericHaze * (0.2 + uvIntensity * 0.8);
 
-                // Composite the layers together on the single pixel face
-                _surface.diffuse.rgb = mix(surfaceColor.rgb, atmosphereColor, finalAtmosphereOpacity * 0.5);
-
+                // Drop the overall mix factor from 0.5 to 0.35 to let the heavy orange plasma breathe
+                _surface.diffuse.rgb = mix(surfaceColor.rgb, atmosphereColor, finalAtmosphereOpacity * 0.35);
                 // Ensure the blinding white-hot CME loops can still burn right through the mix
                 _surface.diffuse.rgb += _surface.emission.rgb;
                 """

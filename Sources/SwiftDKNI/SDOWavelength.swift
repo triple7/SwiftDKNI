@@ -21,7 +21,7 @@ public class NASASDOService {
     public init() {}
     
     public func fetchLatestImage(wavelength: SDOWavelength, resolution: Int = 2048) async throws -> XImage? {
-        print("fetchLatestImage: getting NASA surface image - wavelength \(wavelength) resolution \(resolution)")
+        print("NASASDOService-fetchLatestImage: getting NASA surface image - wavelength \(wavelength) resolution \(resolution)")
         // NASA's live image endpoint. Available resolutions: 512, 1024, 2048, 4096
         let urlString = "https://sdo.gsfc.nasa.gov/assets/img/latest/latest_\(resolution)_\(wavelength.rawValue).jpg"
         
