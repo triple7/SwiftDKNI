@@ -150,6 +150,49 @@ extension SwiftDKNI {
                     ]
                 }
             }
+            // Create the Halo (5% larger than the base star)
+            let haloRadius = sphere.radius * 1.05
+            let haloSphere = SCNSphere(radius: CGFloat(haloRadius))
+            let haloNode = SCNNode(geometry: haloSphere)
+            coronalSurfaceNode.addChildNode(haloNode)
+            let haloMaterial = SCNMaterial()
+            haloMaterial.lightingModel = .constant
+            haloMaterial.writesToDepthBuffer = false
+            haloMaterial.blendMode = .alpha
+
+            let sdoService = NASASDOService()
+            // Fetch the Coronal Hole mask
+            if let coronalHoleMask = try? await sdoService.fetchLatestImage(wavelength: .aia193, resolution: 2048) {
+                
+                    // Feed the NASA image into the diffuse property
+                    haloMaterial.diffuse.contents = coronalHoleMask
+                let coronalHoleShader = """
+                #pragma transparent
+                #pragma body
+
+                // 1. Sample the color of the SDO AIA 193 texture
+                float3 textureColor = _surface.diffuse.rgb;
+
+                // 2. Calculate the luminance (how physically bright the pixel is)
+                float luminance = dot(textureColor, float3(0.299, 0.587, 0.114));
+
+                // 3. The Magic: Alpha Erosion
+                // We use smoothstep to create a harsh threshold. 
+                // If the pixel is dark (luminance < 0.15), it's a Coronal Hole -> Alpha becomes 0.0 (invisible)
+                // If the pixel is bright (luminance > 0.4), it's dense plasma -> Alpha becomes 1.0 (visible)
+                float alphaMask = smoothstep(0.15, 0.4, luminance);
+
+                // 4. Override the visual color to an ethereal atmospheric glow (e.g., icy blue/white)
+                // and multiply the final opacity by our eroded alpha mask.
+                float3 atmosphereColor = float3(0.7, 0.85, 1.0); 
+                _surface.diffuse = float4(atmosphereColor, alphaMask * 0.4); // 40% max opacity so it looks like ghost gas
+                """
+
+                // Inject the shader into the surface entry point
+                    haloMaterial.shaderModifiers = [
+                        .surface: coronalHoleShader
+                    ]
+            }
             return coronalSurfaceNode
         }
     
