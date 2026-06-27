@@ -81,7 +81,7 @@ public final class CMEGeometryBuilder: Sendable {
         
         // Pipe the vertex color (stored in diffuse) directly into emission so it glows deeply,
         // and force the alpha to respect the soft mask, the pulse, AND the fading out to black space.
-        _surface.emission = _surface.diffuse.rgb * pulse * 1.5;
+        _surface.emission.rgb = _surface.diffuse.rgb * pulse * 1.5;
         _surface.transparent.a = _surface.diffuse.a * pulse;
         """
         
