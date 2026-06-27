@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import SceneKit
 
@@ -131,6 +132,15 @@ extension SwiftDKNI {
             magneticLoopGeometry.materials = [magneticLoopMaterial]
             magneticLoopNode.geometry = magneticLoopGeometry
             coronalSurfaceNode.addChildNode(magneticLoopNode)
+            
+            // Create a subtle blur filter
+            if let plasmaBlur = CIFilter(name: "CIGaussianBlur") {
+                plasmaBlur.setValue(1.5, forKey: kCIInputRadiusKey) // Keep it small (1.0 - 2.0)
+                
+                // Apply it to the geometry nodes
+                cmeNode.filters = [plasmaBlur]
+                magneticLoopNode.filters = [plasmaBlur]
+            }
         }
         
         // Fetch the active regions
