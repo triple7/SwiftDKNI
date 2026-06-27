@@ -177,6 +177,7 @@ extension SwiftDKNI {
             let haloRadius = sphere.radius * 1.05
             let haloSphere = SCNSphere(radius: CGFloat(haloRadius))
             let haloNode = SCNNode(geometry: haloSphere)
+            haloNode.isHidden = true
             coronalSurfaceNode.addChildNode(haloNode)
             let haloMaterial = SCNMaterial()
             haloMaterial.lightingModel = .constant
