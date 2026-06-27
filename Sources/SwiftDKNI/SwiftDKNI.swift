@@ -102,7 +102,20 @@ extension SwiftDKNI {
                 magneticLoopNode.geometry = magneticLoopGeometry
                 coronalSurfaceNode.addChildNode(magneticLoopNode)
             }
-            
+    
+            // Fetch the regions
+            let noaaService = NOAADataService()
+            let activeRegions = try await noaaService.fetchActiveRegions()
+
+            // Generate the mask
+            if let sunspotMask = generateSunspotTexture(from: activeRegions) {
+                if let baseMaterial = sphere.materials.first {
+                    
+                    // The multiply blend creates the dark, high-contrast holes
+                    baseMaterial.multiply.contents = sunspotMask
+                    baseMaterial.multiply.intensity = 0.85 // Adjust for darkness
+                }
+            }
             return coronalSurfaceNode
         }
     
