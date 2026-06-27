@@ -184,34 +184,35 @@ extension SwiftDKNI {
                 
                 // --- SHADER 2: Multi-Band Atmosphere Composite ---
                 let multiBandSolarShader = """
-                    #pragma transparent
-                    #pragma body
-                    
-                    // Sample the primary surface texture (NOAA / Core Plasma)
-                    float4 surfaceColor = _surface.diffuse;
-                    
-                    // Sample the secondary NASA SDO Band texture (bound to the transparent slot)
-                    float4 uvBandSample = sampleTexel(u_transparentTexture, _surface.transparentTexcoords);
-                    float uvIntensity = dot(uvBandSample.rgb, float3(0.299, 0.587, 0.114));
-                    
-                    // Mathematical Fresnel Profile for the Limb Glow
-                    float3 N = normalize(_surface.normal);
-                    float3 V = normalize(_surface.viewDir);
-                    float edgeFactor = 1.0 - max(0.0, dot(N, V));
-                    
-                    // Create a smooth, exponential atmospheric haze curve towards the horizon
-                    float atmosphericHaze = pow(edgeFactor, 4.0);
-                    
-                    // Blend the UV Band Data into the Haze
-                    float3 atmosphereColor = float3(0.98, 0.90, 0.75); // Pale coronal plasma cream
-                    float finalAtmosphereOpacity = atmosphericHaze * (0.3 + uvIntensity * 0.7);
-                    
-                    // Composite the layers together on the single pixel face
-                    _surface.diffuse.rgb = mix(surfaceColor.rgb, atmosphereColor, finalAtmosphereOpacity * 0.5);
-                    
-                    // Ensure the blinding white-hot CME loops can still burn right through the mix
-                    _surface.diffuse.rgb += _surface.emission.rgb;
-                    """
+                #pragma transparent
+                #pragma body
+
+                // 1. Sample the primary surface texture (NOAA / Core Plasma)
+                float4 surfaceColor = _surface.diffuse;
+
+                // 2. Read the secondary NASA SDO Band texture 
+                // SceneKit pre-samples the transparent material property for us
+                float4 uvBandSample = _surface.transparent;
+                float uvIntensity = dot(uvBandSample.rgb, float3(0.299, 0.587, 0.114));
+
+                // 3. Mathematical Fresnel Profile for the Limb Glow
+                float3 N = normalize(_surface.normal);
+                float3 V = normalize(_surface.view); // FIXED: Apple uses '_surface.view'
+                float edgeFactor = 1.0 - max(0.0, dot(N, V));
+
+                // Create a smooth, exponential atmospheric haze curve towards the horizon
+                float atmosphericHaze = pow(edgeFactor, 4.0);
+
+                // Blend the UV Band Data into the Haze
+                float3 atmosphereColor = float3(0.98, 0.90, 0.75); // Pale coronal plasma cream
+                float finalAtmosphereOpacity = atmosphericHaze * (0.3 + uvIntensity * 0.7);
+
+                // Composite the layers together on the single pixel face
+                _surface.diffuse.rgb = mix(surfaceColor.rgb, atmosphereColor, finalAtmosphereOpacity * 0.5);
+
+                // Ensure the blinding white-hot CME loops can still burn right through the mix
+                _surface.diffuse.rgb += _surface.emission.rgb;
+                """
                 
                 // Apply both shader modifiers simultaneously
                 baseMaterial.shaderModifiers = [
