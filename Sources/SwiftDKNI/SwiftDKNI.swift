@@ -188,28 +188,28 @@ extension SwiftDKNI {
                 let multiBandSolarShader = """
                 #pragma transparent
                 #pragma body
-
+                
                 // 1. Sample the primary surface texture (NOAA / Core Plasma)
                 float4 surfaceColor = _surface.diffuse;
-
+                
                 // 2. Read the secondary NASA SDO Band texture 
                 // SceneKit pre-samples the transparent material property for us
                 float4 uvBandSample = _surface.transparent;
                 float uvIntensity = dot(uvBandSample.rgb, float3(0.299, 0.587, 0.114));
-
+                
                 // 3. Mathematical Fresnel Profile for the Limb Glow
                 float3 N = normalize(_surface.normal);
                 float3 V = normalize(_surface.view); // FIXED: Apple uses '_surface.view'
                 float edgeFactor = 1.0 - max(0.0, dot(N, V));
-
+                
                 // Sharpens the curve: It keeps the atmosphere completely invisible on the front face,
                 // and forces it to swell up rapidly ONLY as it reaches the absolute edge.
                 float atmosphericHaze = pow(edgeFactor, 6.0); // Cranked from 4.0 to 6.0
-
+                
                 // Blend the UV Band Data into the Haze
                 float3 atmosphereColor = float3(0.98, 0.90, 0.75); 
                 float finalAtmosphereOpacity = atmosphericHaze * (0.2 + uvIntensity * 0.8);
-
+                
                 // Drop the overall mix factor from 0.5 to 0.35 to let the heavy orange plasma breathe
                 _surface.diffuse.rgb = mix(surfaceColor.rgb, atmosphereColor, finalAtmosphereOpacity * 0.35);
                 // Ensure the blinding white-hot CME loops can still burn right through the mix
@@ -226,4 +226,55 @@ extension SwiftDKNI {
         
         return coronalSurfaceNode
     }
+
+    public func addDistortionTechniqueToScene(sceneView: SCNView) {
+        // 1. Resolve the Documents directory path
+        guard let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            print("Failed to find Documents directory.")
+            return
+        }
+        
+        // 2. Append the compiled Metal library filename
+        let libraryURL = documentsPath.appendingPathComponent("Distortion.metallib")
+        
+        let techniqueDict: [String: Any] = [
+            "passes": [
+                // PASS 1: Render ONLY the CME nodes into the CME_BUFFER
+                "cmePass": [
+                    "draw": "DRAW_SCENE",
+                    "inputs": [:],
+                    "outputs": [
+                        "color": "CME_BUFFER"
+                    ],
+                    // This is the magic key: Only render nodes where categoryBitMask == 4 (which is 1 << 2)
+                    "includeCategoryMask": 4
+                ],
+                // PASS 2: Composite the scene and the distorted CME_BUFFER
+                "distortionPass": [
+                    "draw": "DRAW_QUAD",
+                    "metalVertexShader": "distortionVertex",
+                    "metalFragmentShader": "distortionFragment",
+                    "metalLibraryName": libraryURL.path, // <--- LOAD FROM DOCUMENTS DIRECTORY
+                    "inputs": [
+                        "colorSampler": "COLOR",           // Standard scene render
+                        "refractionSampler": "CME_BUFFER", // Output from cmePass
+                        "time": "scn_frameTime"
+                    ],
+                    "outputs": ["color": "COLOR"]
+                ]
+            ],
+            "targets": [
+                "CME_BUFFER": [
+                    "type": "color",
+                    "size": "relative",
+                    "scaleFactor": 1.0,
+                    "pixelFormat": "rgba8" // Or rgba16f if you need HDR
+                ]
+            ],
+            "sequence": ["cmePass", "distortionPass"] // Execute in this order
+        ]
+        
+        sceneView.technique = SCNTechnique(dictionary: techniqueDict)
+    }
+
 }
