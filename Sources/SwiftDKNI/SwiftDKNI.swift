@@ -281,5 +281,4 @@ extension SwiftDKNI {
         
         sceneView.technique = SCNTechnique(dictionary: techniqueDict)
     }
-    
 }
