@@ -25,21 +25,51 @@ public final class CMEGeometryBuilder: Sendable {
         let baseAddress: UnsafeMutablePointer<T>
     }
 
+    // Generates a soft, blurry white circle in memory
+    private func createSoftGlowTexture() -> XImage {
+        let size = CGSize(width: 64, height: 64)
+        
+        #if os(macOS)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        let context = NSGraphicsContext.current!.cgContext
+        #else
+        UIGraphicsBeginImageContextWithOptions(size, false, 0)
+        let context = UIGraphicsGetCurrentContext()!
+        #endif
+        
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let colors = [
+            CGColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 1.0),
+            CGColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 0.0)
+        ] as CFArray
+        let gradient = CGGradient(colorsSpace: colorSpace, colors: colors, locations: [0.0, 1.0])!
+        
+        let center = CGPoint(x: size.width / 2, y: size.height / 2)
+        context.drawRadialGradient(gradient, startCenter: center, startRadius: 0, endCenter: center, endRadius: size.width / 2, options: [])
+        
+        #if os(macOS)
+        image.unlockFocus()
+        return image
+        #else
+        let image = UIGraphicsGetImageFromCurrentImageContext()!
+        UIGraphicsEndImageContext()
+        return image
+        #endif
+    }
+
     func createMagneticLoopMaterial() -> SCNMaterial {
         let material = SCNMaterial()
         material.lightingModel = .constant
         
-        #if os(macOS)
-        material.diffuse.contents = NSColor.white
-        #else
-        material.diffuse.contents = UIColor.white
-        #endif
+        // --- THE FIX: Swap hard white for the soft gradient mask ---
+        material.diffuse.contents = createSoftGlowTexture()
         
         material.blendMode = .add
         material.isDoubleSided = true
         material.writesToDepthBuffer = false
         
-        // --- NEW: THE FLOW SHADER ---
+        // --- THE FLOW SHADER ---
         let flowShader = """
         #pragma transparent
         
@@ -62,6 +92,10 @@ public final class CMEGeometryBuilder: Sendable {
         
         // 6. Apply the mask to the existing vertex colors
         _surface.emission *= pulse;
+        
+        // Because we put the soft mask in the diffuse channel, SceneKit automatically 
+        // loads its alpha into _surface.transparent.a. 
+        // Multiplying it by 'pulse' perfectly merges your flow animation with the soft edges!
         _surface.transparent.a *= pulse;
         """
         
@@ -70,7 +104,6 @@ public final class CMEGeometryBuilder: Sendable {
         
         return material
     }
-
     func buildMagneticLoops(for event: AveragedCMEData, loopCount: Int = 40, pointsPerLoop: Int = 50, solarRadius: Float = 1.0) -> SCNGeometry {
                 
             let latRad = Float(event.latitude ?? 0.0) * .pi / 180.0
