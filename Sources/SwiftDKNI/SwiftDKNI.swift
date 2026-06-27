@@ -2,14 +2,19 @@ import Foundation
 import SceneKit
 
 // MARK: - Core Singleton
-final public class SwiftDKNI:Sendable {
-    public static let shared = SwiftDKNI()
+final public class SwiftDKNI: Sendable {
+    // Initialized with the AstreOS API key
+    public static let shared = SwiftDKNI(apiKey: "qnAfMmkLcxyAvwNKV2saZ13raQO7cwvc4a3y97z6")
+    
+    private let apiKey: String
     
     // Hold references to our pipeline services
     private let donkiService = DONKIService()
     private let renderer = CMEFluxRopeRenderer()
     
-    private init() {}
+    private init(apiKey: String) {
+        self.apiKey = apiKey
+    }
 }
 
 // MARK: - Surface Generation Extension
@@ -29,8 +34,8 @@ extension SwiftDKNI {
             endTime: String
         ) async throws -> SCNNode {
             
-            // 1. Fetch the averaged data
-            let request = CMERequest(startDate: startTime, endDate: endTime, apiKey: "DEMO_KEY")
+            // 1. Fetch the averaged data using the stored API key
+            let request = CMERequest(startDate: startTime, endDate: endTime, apiKey: self.apiKey)
             let events = try await donkiService.fetchAndAverageCMEData(request: request)
             
             // 2. Create the parent container
@@ -59,6 +64,7 @@ extension SwiftDKNI {
             magneticLoopMaterial.writesToDepthBuffer = false
             // Optional: Makes the lines thicker and softer if supported by Metal
             magneticLoopMaterial.isDoubleSided = true
+            
             // 4. Generate and align each event
             for event in events {
                 
@@ -124,6 +130,7 @@ extension SwiftDKNI {
                     // The multiply blend creates the dark, high-contrast holes
                     baseMaterial.multiply.contents = sunspotMask
                     baseMaterial.multiply.intensity = 0.85 // Adjust for darkness
+                    
                     // 1. The Metal GLSL Shader String
                     let plasmaSwirlShader = """
                     #pragma body
@@ -135,7 +142,7 @@ extension SwiftDKNI {
                     // The amplitude is dropped all the way down to 0.003
                     float warpX = (sin(_geometry.texcoords[0].y * 12.0 + flowTime) 
                                  + sin(_geometry.texcoords[0].y * 28.0 - flowTime * 1.5)) * 0.003;
-                                 
+                                  
                     float warpY = (cos(_geometry.texcoords[0].x * 14.0 - flowTime) 
                                  + cos(_geometry.texcoords[0].x * 24.0 + flowTime * 1.2)) * 0.003;
 
