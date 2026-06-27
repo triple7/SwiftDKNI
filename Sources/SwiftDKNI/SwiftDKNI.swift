@@ -120,6 +120,29 @@ extension SwiftDKNI {
                     // The multiply blend creates the dark, high-contrast holes
                     baseMaterial.multiply.contents = sunspotMask
                     baseMaterial.multiply.intensity = 0.85 // Adjust for darkness
+                    // 1. The Metal GLSL Shader String
+                    let plasmaSwirlShader = """
+                    #pragma body
+
+                    // SceneKit automatically provides 'u_time' (seconds since the scene started).
+                    // We scale it down so the star boils slowly and heavily.
+                    float flowTime = u_time * 0.2;
+
+                    // Create intersecting trigonometric waves to simulate fluid turbulence.
+                    // The multipliers (20.0) control the density of the ripples.
+                    // The amplitude (0.01) controls how far the pixels stretch.
+                    float warpX = sin(_geometry.texcoords[0].y * 20.0 + flowTime) * 0.01;
+                    float warpY = cos(_geometry.texcoords[0].x * 20.0 - flowTime) * 0.01;
+
+                    // Apply the distortion to the UV map before textures are rendered.
+                    _geometry.texcoords[0].x += warpX;
+                    _geometry.texcoords[0].y += warpY;
+                    """
+
+                    // 2. Inject it into the material
+                    baseMaterial.shaderModifiers = [
+                        .geometry: plasmaSwirlShader
+                    ]
                 }
             }
             return coronalSurfaceNode
