@@ -80,7 +80,7 @@ public final class CMEGeometryBuilder: Sendable {
             let lonRad = rotatedLon * .pi / 180.0
         let timeInterval = Date().timeIntervalSince(event.parsedDate ?? Date())
         let daysPassed = Float(timeInterval / 86400.0)
-        print("🎯 ROTATION TRACE | Days Ago: \(String(format: "%.1f", daysPassed)) | Orig Lon: \(event.longitude ?? 0.0) -> New Lon: \(String(format: "%.1f", rotatedLon))")
+//        print("🎯 ROTATION TRACE | Days Ago: \(String(format: "%.1f", daysPassed)) | Orig Lon: \(event.longitude ?? 0.0) -> New Lon: \(String(format: "%.1f", rotatedLon))")
         // ------------------------------
         
             // --- NEW: 90-Degree Phase Shift (Align Earth to Camera Z-Axis) ---

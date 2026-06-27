@@ -44,8 +44,9 @@ final public class CMEFluxRopeRenderer: Sendable {
         ]
         material.blendMode = .add
         material.lightingModel = .constant
-        material.readsFromDepthBuffer = true
+        material.readsFromDepthBuffer = false
         material.writesToDepthBuffer = false
+        material.isDoubleSided = true
         
         // 4. Bind Uniforms natively (No Data buffers required)
         // Make sure these keys EXACTLY match the names in your #pragma arguments block

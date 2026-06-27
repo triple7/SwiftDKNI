@@ -54,6 +54,11 @@ extension SwiftDKNI {
             // magnetic loop material across events
             let geometryBuilder = CMEGeometryBuilder()
             let magneticLoopMaterial = geometryBuilder.createMagneticLoopMaterial()
+            magneticLoopMaterial.lightingModel = .constant
+            magneticLoopMaterial.blendMode = .add
+            magneticLoopMaterial.writesToDepthBuffer = false
+            // Optional: Makes the lines thicker and softer if supported by Metal
+            magneticLoopMaterial.isDoubleSided = true
             // 4. Generate and align each event
             for event in events {
                 
@@ -110,7 +115,8 @@ extension SwiftDKNI {
             // Generate the mask
             if let sunspotMask = generateSunspotTexture(from: activeRegions) {
                 if let baseMaterial = sphere.materials.first {
-                    
+                    baseMaterial.lightingModel = .constant
+
                     // The multiply blend creates the dark, high-contrast holes
                     baseMaterial.multiply.contents = sunspotMask
                     baseMaterial.multiply.intensity = 0.85 // Adjust for darkness
