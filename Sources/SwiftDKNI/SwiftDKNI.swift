@@ -226,18 +226,22 @@ extension SwiftDKNI {
         
         return coronalSurfaceNode
     }
-
+    
     public func addDistortionTechniqueToScene(sceneView: SCNView) {
-        // 1. Resolve the Documents directory path
         guard let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
             print("Failed to find Documents directory.")
             return
         }
         
-        // 2. Append the compiled Metal library filename
         let libraryURL = documentsPath.appendingPathComponent("Distortion.metallib")
         
         let techniqueDict: [String: Any] = [
+            "symbols": [
+                "timeSymbol": [
+                    "semantic": "time", // Tells SceneKit to pass the system time automatically
+                    "type": "float"
+                ]
+            ],
             "passes": [
                 // PASS 1: Render ONLY the CME nodes into the CME_BUFFER
                 "cmePass": [
@@ -254,13 +258,15 @@ extension SwiftDKNI {
                     "draw": "DRAW_QUAD",
                     "metalVertexShader": "distortionVertex",
                     "metalFragmentShader": "distortionFragment",
-                    "metalLibraryName": libraryURL.path, // <--- LOAD FROM DOCUMENTS DIRECTORY
+                    "metalLibraryName": libraryURL.path, // Load the compiled .metallib from Documents
                     "inputs": [
                         "colorSampler": "COLOR",           // Standard scene render
                         "refractionSampler": "CME_BUFFER", // Output from cmePass
-                        "time": "scn_frameTime"
+                        "time": "timeSymbol"               // Mapped to the symbol defined above
                     ],
-                    "outputs": ["color": "COLOR"]
+                    "outputs": [
+                        "color": "COLOR"
+                    ]
                 ]
             ],
             "targets": [
@@ -271,10 +277,10 @@ extension SwiftDKNI {
                     "pixelFormat": "rgba8" // Or rgba16f if you need HDR
                 ]
             ],
-            "sequence": ["cmePass", "distortionPass"] // Execute in this order
+            "sequence": ["cmePass", "distortionPass"] // Execute in this specific order
         ]
         
         sceneView.technique = SCNTechnique(dictionary: techniqueDict)
     }
-
+    
 }
