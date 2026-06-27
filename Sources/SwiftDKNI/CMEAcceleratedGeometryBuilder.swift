@@ -72,72 +72,70 @@ public final class CMEGeometryBuilder: Sendable {
     }
 
     func buildMagneticLoops(for event: AveragedCMEData, loopCount: Int = 40, pointsPerLoop: Int = 50, solarRadius: Float = 1.0) -> SCNGeometry {
-            
+                
             let latRad = Float(event.latitude ?? 0.0) * .pi / 180.0
-            
-            // --- NEW: Apply the temporal rotation offset ---
-        print("🎯 DEBUG CME - Raw String: '\(event.startTime ?? "NIL")' | Parsed: \(String(describing: event.parsedDate)) | Orig Lon: \(event.longitude ?? 0.0)")
-        let rotatedLon = calculateRotatedLongitude(originalLongitude: Float(event.longitude ?? 0.0), eventDate: event.parsedDate)
+                
+            // --- Apply the temporal rotation offset ---
+            let rotatedLon = calculateRotatedLongitude(originalLongitude: Float(event.longitude ?? 0.0), eventDate: event.parsedDate)
             let lonRad = rotatedLon * .pi / 180.0
-            // -----------------------------------------------
-            
+                
+            // --- NEW: 90-Degree Phase Shift (Align Earth to Camera Z-Axis) ---
+            // Swapped sin(lonRad) and cos(lonRad) on the X and Z axes
             let coreNormal = simd_float3(
-                cos(latRad) * cos(lonRad),
+                cos(latRad) * sin(lonRad),
                 sin(latRad),
-                cos(latRad) * sin(lonRad)
+                cos(latRad) * cos(lonRad)
             )
-            
+                
             let up = abs(coreNormal.y) > 0.99 ? simd_float3(1, 0, 0) : simd_float3(0, 1, 0)
             let tangent = simd_normalize(simd_cross(up, coreNormal))
             let bitangent = simd_normalize(simd_cross(coreNormal, tangent))
-            
+                
             var vertices: [simd_float3] = []
             var colors: [simd_float4] = []
-            var uvs: [simd_float2] = [] // NEW: Texture coordinates to act as the "track"
+            var uvs: [simd_float2] = []
             var indices: [Int32] = []
             var currentIndex: Int32 = 0
-            
+                
             for _ in 0..<loopCount {
                 let footprintSpread = Float.random(in: 0.02...0.15)
                 let angle = Float.random(in: 0...(2 * .pi))
                 let offset = (tangent * cos(angle) + bitangent * sin(angle)) * footprintSpread
-                
+                    
                 var startPoint = simd_normalize(coreNormal + offset)
                 var endPoint = simd_normalize(coreNormal - offset)
                 startPoint *= solarRadius
                 endPoint *= solarRadius
-                
+                    
                 let loopHeight = Float(event.speed) * 0.0001 * Float.random(in: 0.2...0.6)
                 var controlPoint = simd_normalize(coreNormal)
                 controlPoint *= (solarRadius + loopHeight)
-                
-                // NEW: Randomize animation start time and flow direction for each loop
+                    
                 let phaseOffset = Float.random(in: 0.0...1.0)
                 let flowsForward = Bool.random()
-                
+                    
                 for i in 0..<pointsPerLoop {
                     let t = Float(i) / Float(pointsPerLoop - 1)
                     let oneMinusT = 1.0 - t
-                    
+                        
                     // Geometry Math
                     let p0 = startPoint * (oneMinusT * oneMinusT)
                     let p1 = controlPoint * (2.0 * oneMinusT * t)
                     let p2 = endPoint * (t * t)
                     vertices.append(p0 + p1 + p2)
-                    
-                    // Temperature Gradient (Apex is at t=0.5)
+                        
+                    // Temperature Gradient
                     let distanceFromApex = abs(t - 0.5) * 2.0
                     let r: Float = 1.0
                     let g: Float = 0.1 + (0.8 * distanceFromApex)
                     let b: Float = 0.0 + (0.5 * distanceFromApex)
                     let a: Float = 0.3 + (0.7 * distanceFromApex)
                     colors.append(simd_float4(r, g, b, a))
-                    
-                    // NEW: Set the UV address for the Shader.
-                    // X is the position on the track, Y is the random start time delay.
+                        
+                    // UV track
                     let trackPosition = flowsForward ? t : (1.0 - t)
                     uvs.append(simd_float2(trackPosition, phaseOffset))
-                    
+                        
                     if i > 0 {
                         indices.append(currentIndex - 1)
                         indices.append(currentIndex)
@@ -145,36 +143,35 @@ public final class CMEGeometryBuilder: Sendable {
                     currentIndex += 1
                 }
             }
-            
+                
             let vertexData = Data(bytes: vertices, count: vertices.count * MemoryLayout<simd_float3>.size)
             let colorData = Data(bytes: colors, count: colors.count * MemoryLayout<simd_float4>.size)
-            let uvData = Data(bytes: uvs, count: uvs.count * MemoryLayout<simd_float2>.size) // NEW
-            
+            let uvData = Data(bytes: uvs, count: uvs.count * MemoryLayout<simd_float2>.size)
+                
             let vertexSource = SCNGeometrySource(
                 data: vertexData, semantic: .vertex, vectorCount: vertices.count,
                 usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size,
                 dataOffset: 0, dataStride: MemoryLayout<simd_float3>.size
             )
-            
+                
             let colorSource = SCNGeometrySource(
                 data: colorData, semantic: .color, vectorCount: colors.count,
                 usesFloatComponents: true, componentsPerVector: 4, bytesPerComponent: MemoryLayout<Float>.size,
                 dataOffset: 0, dataStride: MemoryLayout<simd_float4>.size
             )
-            
-            // NEW: Tell SceneKit about our UV track
+                
             let uvSource = SCNGeometrySource(
                 data: uvData, semantic: .texcoord, vectorCount: uvs.count,
                 usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size,
                 dataOffset: 0, dataStride: MemoryLayout<simd_float2>.size
             )
-            
+                
             let indexData = Data(bytes: indices, count: indices.count * MemoryLayout<Int32>.size)
             let element = SCNGeometryElement(
                 data: indexData, primitiveType: .line, primitiveCount: indices.count / 2,
                 bytesPerIndex: MemoryLayout<Int32>.size
             )
-            
+                
             return SCNGeometry(sources: [vertexSource, colorSource, uvSource], elements: [element])
         }
 
@@ -257,10 +254,10 @@ public final class CMEGeometryBuilder: Sendable {
         let rotatedLon = calculateRotatedLongitude(originalLongitude: Float(event.longitude ?? 0.0), eventDate: event.parsedDate)
         let lonRad = rotatedLon * .pi / 180.0
             
-        let targetX = cos(latRad) * cos(lonRad)
+        // Swapped sin/cos on X and Z to map Longitude 0 (Earth) directly to the front of the camera
+        let targetX = cos(latRad) * sin(lonRad)
         let targetY = sin(latRad)
-        let targetZ = cos(latRad) * sin(lonRad)
-            
+        let targetZ = cos(latRad) * cos(lonRad)
         let defaultAxis = simd_float3(0, 0, 1)
         let targetAxis = simd_float3(targetX, targetY, targetZ)
 
