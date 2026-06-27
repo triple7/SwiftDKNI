@@ -18,14 +18,8 @@ final public class DONKIService: Sendable {
             throw CMEFetcherError.invalidURL
         }
         
-        // Grab the base date query items from your struct
-        var items = request.queryItems
-        
-        // THE FIX: Explicitly append the API key using NASA's exact parameter name ("api_key")
-        items.append(URLQueryItem(name: "api_key", value: request.apiKey))
-        
-        // Assign the complete array back to the components
-        components.queryItems = items
+        // Use the queryItems mapped directly from the struct
+        components.queryItems = request.queryItems
         
         guard let url = components.url else {
             throw CMEFetcherError.invalidURL
@@ -34,12 +28,10 @@ final public class DONKIService: Sendable {
         // 2. Perform the Network Request
         let (data, response) = try await URLSession.shared.data(from: url)
         
-        guard let httpResponse = response as? HTTPURLResponse,
+        guard let httpResponse = response as? HTTPURLResponse, 
               (200...299).contains(httpResponse.statusCode) else {
             let badResponse = response as? HTTPURLResponse
-            print("HTTP Error: \(badResponse?.statusCode ?? -1)")
-            // If you hit a 429 again, print the URL to verify the key is attached
-            print("Failed URL was: \(url.absoluteString)")
+                print("No data: \(badResponse!.statusCode)")
             throw CMEFetcherError.noData
         }
         
@@ -83,9 +75,9 @@ final public class DONKIService: Sendable {
             
             for analysis in targetAnalyses {
                 // Ensure all parameters exist before adding to the sum
-                if let lat = analysis.latitude,
+                if let lat = analysis.latitude, 
                    let lon = analysis.longitude,
-                   let halfAngle = analysis.halfAngle,
+                   let halfAngle = analysis.halfAngle, 
                    let speed = analysis.speed {
                     
                     totalLat += lat
