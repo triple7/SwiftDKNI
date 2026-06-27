@@ -124,16 +124,22 @@ extension SwiftDKNI {
                     let plasmaSwirlShader = """
                     #pragma body
 
-                    float flowTime = u_time * 0.5; // Sped up the animation
+                    // Slow the boil down to a heavy, rolling speed
+                    float flowTime = u_time * 0.15;
 
-                    // Cranked the amplitude from 0.01 to 0.08 (8x stronger)
-                    // Cranked the frequency from 20.0 to 40.0 for tighter ripples
-                    float warpX = sin(_geometry.texcoords[0].y * 40.0 + flowTime) * 0.08;
-                    float warpY = cos(_geometry.texcoords[0].x * 40.0 - flowTime) * 0.08;
+                    // Stack two different waves (one large/slow, one small/fast) for organic turbulence
+                    // The amplitude is dropped all the way down to 0.003
+                    float warpX = (sin(_geometry.texcoords[0].y * 12.0 + flowTime) 
+                                 + sin(_geometry.texcoords[0].y * 28.0 - flowTime * 1.5)) * 0.003;
+                                 
+                    float warpY = (cos(_geometry.texcoords[0].x * 14.0 - flowTime) 
+                                 + cos(_geometry.texcoords[0].x * 24.0 + flowTime * 1.2)) * 0.003;
 
+                    // Apply the micro-distortion
                     _geometry.texcoords[0].x += warpX;
                     _geometry.texcoords[0].y += warpY;
                     """
+                    
                     // 2. Inject it into the material
                     baseMaterial.shaderModifiers = [
                         .geometry: plasmaSwirlShader
