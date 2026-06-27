@@ -50,16 +50,30 @@ public struct LinkedEvent: Codable {
 }
 
 
-extension AveragedCMEData { // (or whatever struct you put this in)
-    /// Safely parses the NASA DONKI ISO8601 string into a Swift Date object
+extension AveragedCMEData {
     var parsedDate: Date? {
-        let formatter = ISO8601DateFormatter()
+        let dateString = self.startTime
         
-        // DONKI typically formats strings exactly like: "2026-06-10T14:32Z"
-        formatter.formatOptions = [.withInternetDateTime]
+        // 1. Try the strict ISO8601 standard first
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime]
+        if let strictDate = isoFormatter.date(from: dateString) {
+            return strictDate
+        }
         
-        // Since startTime is already a guaranteed String, just pass it directly
-        return formatter.date(from: self.startTime)
+        // 2. Fallback: NASA frequently drops the seconds (e.g., "2026-06-10T14:32Z")
+        let backupFormatter = DateFormatter()
+        backupFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm'Z'"
+        backupFormatter.timeZone = TimeZone(secondsFromGMT: 0)
+        
+        let finalDate = backupFormatter.date(from: dateString)
+        
+        // Quick console check to warn you if data is still failing
+        if finalDate == nil {
+            print("⚠️ WARNING: Failed to parse DONKI date: \(dateString)")
+        }
+        
+        return finalDate
     }
 }
 
