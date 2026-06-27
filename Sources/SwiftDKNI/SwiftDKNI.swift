@@ -228,12 +228,6 @@ extension SwiftDKNI {
     }
     
     public func addDistortionTechniqueToScene(sceneView: SCNView) {
-        guard let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
-            print("Failed to find Documents directory.")
-            return
-        }
-        
-        let libraryURL = documentsPath.appendingPathComponent("Distortion.metallib")
         
         let techniqueDict: [String: Any] = [
             "symbols": [
@@ -258,7 +252,6 @@ extension SwiftDKNI {
                     "draw": "DRAW_QUAD",
                     "metalVertexShader": "distortionVertex",
                     "metalFragmentShader": "distortionFragment",
-                    "metalLibraryName": libraryURL.path, // Load the compiled .metallib from Documents
                     "inputs": [
                         "colorSampler": "COLOR",           // Standard scene render
                         "refractionSampler": "CME_BUFFER", // Output from cmePass
