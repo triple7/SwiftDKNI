@@ -79,9 +79,10 @@ public final class CMEGeometryBuilder: Sendable {
         float tail = 1.0 - flow;
         float pulse = max(0.1, pow(tail, 8.0));
         
-        // Multiply vertex emission and texture alpha by the velocity pulse
-        _surface.emission *= pulse;
-        _surface.transparent.a *= pulse;
+        // Pipe the vertex color (stored in diffuse) directly into emission so it glows deeply,
+        // and force the alpha to respect the soft mask, the pulse, AND the fading out to black space.
+        _surface.emission = _surface.diffuse.rgb * pulse * 1.5;
+        _surface.transparent.a = _surface.diffuse.a * pulse;
         """
         
         material.shaderModifiers = [.surface: flowShader]
@@ -97,20 +98,12 @@ public final class CMEGeometryBuilder: Sendable {
             return originalLongitude
         }
         
-        // The Sun rotates approx 13.2 degrees per day relative to an Earth observer
         let solarRotationRatePerDay: Float = 13.2
-        
-        // Calculate how many days ago the event happened
         let timeInterval = currentDate.timeIntervalSince(eventDate)
         let daysPassed = Float(timeInterval / (60 * 60 * 24))
-        
-        // Calculate the rotational offset
         let offsetDegrees = daysPassed * solarRotationRatePerDay
-        
-        // Add offset to the original longitude (Sunspots move East to West across the face)
         var newLongitude = originalLongitude + offsetDegrees
         
-        // Normalize the longitude to stay within standard -180 to 180 spherical coordinates
         newLongitude = newLongitude.truncatingRemainder(dividingBy: 360.0)
         
         if newLongitude > 180.0 {
@@ -124,13 +117,11 @@ public final class CMEGeometryBuilder: Sendable {
     
     // MARK: - 3. The Flux Rope Mathematics (SIMD)
     
-    /// A single Bezier curve representing a stretched magnetic field line
     private struct MagneticFieldLine {
         let p0: simd_float3 // Root 1
         let p1: simd_float3 // Apex (Stretched by solar wind/ejection)
         let p2: simd_float3 // Root 2
         
-        // Evaluates position along the curve (t = 0.0 to 1.0)
         func position(at t: Float) -> simd_float3 {
             let u = 1.0 - t
             let tt = t * t
@@ -143,7 +134,6 @@ public final class CMEGeometryBuilder: Sendable {
             return term1 + term2 + term3
         }
         
-        // Evaluates the forward direction (tangent) along the curve
         func tangent(at t: Float) -> simd_float3 {
             let u = 1.0 - t
             let dP1 = (p1 - p0) * (2.0 * u)
@@ -152,44 +142,39 @@ public final class CMEGeometryBuilder: Sendable {
         }
     }
     
-    /// Generates the mathematical skeleton for both the loops and the particles to share
     private func generateFluxRopeSkeleton(lat: Float, lon: Float, radius: Float, speed: Float, halfAngle: Float, lineCount: Int) -> [MagneticFieldLine] {
         var lines: [MagneticFieldLine] = []
         
         let latRad = lat * .pi / 180.0
         let lonRad = lon * .pi / 180.0
         
-        // Center point of the eruption on the surface
         let centerDir = simd_float3(
             cos(latRad) * sin(lonRad),
             sin(latRad),
             cos(latRad) * cos(lonRad)
         )
         
-        // Establish a local coordinate system to spread the roots
         let up = simd_float3(0, 1, 0)
         var right = simd_cross(centerDir, up)
         if simd_length(right) < 0.001 { right = simd_float3(1, 0, 0) }
         right = simd_normalize(right)
         let localUp = simd_normalize(simd_cross(right, centerDir))
         
-        // The force of the CME stretches the loops massively outward
-        let heightMultiplier = 1.2 + (speed / 1000.0) // Faster CMEs stretch loops higher
-        let spreadRad = (halfAngle > 0 ? halfAngle : 20.0) * .pi / 180.0
+        // TIGHTEN THE SCALE: Constrain the max outward stretch so it doesn't dwarf the sun
+        let heightMultiplier = 0.6 + (speed / 2000.0)
+        let spreadRad = (halfAngle > 0 ? halfAngle : 15.0) * .pi / 180.0 * 0.6
         
         for _ in 0..<lineCount {
-            // Randomize root spread on the surface
             let r1 = Float.random(in: -1.0...1.0) * spreadRad
             let r2 = Float.random(in: -1.0...1.0) * spreadRad
             let rootOffset1 = (right * r1) + (localUp * r2)
-            let rootOffset2 = (right * -r1) + (localUp * -r2) // Opposite side of the active region
+            let rootOffset2 = (right * -r1) + (localUp * -r2)
             
             let p0 = simd_normalize(centerDir + rootOffset1) * radius
             let p2 = simd_normalize(centerDir + rootOffset2) * radius
             
-            // The Skew: Push the apex outward along the eruption vector, blowing it into space
             let outwardSkew = centerDir * (radius * heightMultiplier)
-            let noiseOffset = (right * Float.random(in: -0.2...0.2)) + (localUp * Float.random(in: -0.2...0.2))
+            let noiseOffset = (right * Float.random(in: -0.15...0.15)) + (localUp * Float.random(in: -0.15...0.15))
             
             let p1 = (centerDir * radius) + outwardSkew + (noiseOffset * radius)
             
@@ -201,7 +186,6 @@ public final class CMEGeometryBuilder: Sendable {
     
     // MARK: - 4. Geometry Generators
     
-    /// Builds the visible magnetic arches
     public func buildMagneticLoops(for event: AveragedCMEData, loopCount: Int = 40, pointsPerLoop: Int = 50, solarRadius: Float = 1.0) -> SCNGeometry {
         let lat = Float(event.latitude ?? 0.0)
         let rotatedLon = calculateRotatedLongitude(originalLongitude: Float(event.longitude ?? 0.0), eventDate: event.parsedDate)
@@ -209,12 +193,12 @@ public final class CMEGeometryBuilder: Sendable {
         let speed = Float(event.speed)
         let halfAngle = Float(event.halfAngle)
         
-        // Use the new skewed math but map it to your loopCount and pointsPerLoop
         let skeleton = generateFluxRopeSkeleton(lat: lat, lon: rotatedLon, radius: solarRadius, speed: speed, halfAngle: halfAngle, lineCount: loopCount)
         
         var vertices: [simd_float3] = []
         var indices: [Int32] = []
-        var texcoords: [simd_float2] = [] // u = t, v = phase
+        var texcoords: [simd_float2] = []
+        var colors: [simd_float4] = []
         
         var currentIndex: Int32 = 0
         
@@ -225,6 +209,22 @@ public final class CMEGeometryBuilder: Sendable {
                 let t = Float(i) / Float(pointsPerLoop)
                 vertices.append(line.position(at: t))
                 texcoords.append(simd_float2(t, phase))
+                
+                // Calculates how far out into space we are (0.0 = surface roots, 1.0 = deep space apex)
+                let outwardness = 1.0 - (abs(t - 0.5) * 2.0)
+                
+                // Dissipates to 0.0 Alpha to perfectly blend into black space
+                let coreColor = simd_float4(1.0, 1.0, 1.0, 0.9)
+                let midColor  = simd_float4(1.0, 0.7, 0.1, 0.5)
+                let edgeColor = simd_float4(0.8, 0.0, 0.0, 0.0) // Invisible red
+                
+                let color: simd_float4
+                if outwardness < 0.4 {
+                    color = mixColor(coreColor, midColor, factor: outwardness / 0.4)
+                } else {
+                    color = mixColor(midColor, edgeColor, factor: (outwardness - 0.4) / 0.6)
+                }
+                colors.append(color)
                 
                 if i > 0 {
                     indices.append(currentIndex - 1)
@@ -248,16 +248,22 @@ public final class CMEGeometryBuilder: Sendable {
             dataOffset: 0, dataStride: MemoryLayout<simd_float2>.size
         )
         
+        let colorData = Data(bytes: colors, count: colors.count * MemoryLayout<simd_float4>.size)
+        let colorSource = SCNGeometrySource(
+            data: colorData, semantic: .color, vectorCount: colors.count,
+            usesFloatComponents: true, componentsPerVector: 4, bytesPerComponent: MemoryLayout<Float>.size,
+            dataOffset: 0, dataStride: MemoryLayout<simd_float4>.size
+        )
+        
         let indexData = Data(bytes: indices, count: indices.count * MemoryLayout<Int32>.size)
         let element = SCNGeometryElement(
             data: indexData, primitiveType: .line, primitiveCount: indices.count / 2,
             bytesPerIndex: MemoryLayout<Int32>.size
         )
         
-        return SCNGeometry(sources: [source, uvSource], elements: [element])
+        return SCNGeometry(sources: [source, uvSource, colorSource], elements: [element])
     }
     
-    /// Builds the helical CME point cloud spiraling around the magnetic lines.
     public func buildBoundaryShellAccelerated(for event: AveragedCMEData, pointCount: Int = 10000, solarRadius: Float = 1.0) -> SCNGeometry {
         let lat = Float(event.latitude ?? 0.0)
         let rotatedLon = calculateRotatedLongitude(originalLongitude: Float(event.longitude ?? 0.0), eventDate: event.parsedDate)
@@ -265,7 +271,6 @@ public final class CMEGeometryBuilder: Sendable {
         let speed = Float(event.speed)
         let halfAngle = Float(event.halfAngle)
         
-        // We use fewer skeleton lines for the particles to form distinct "strands" in the tornado
         let skeleton = generateFluxRopeSkeleton(lat: lat, lon: rotatedLon, radius: solarRadius, speed: speed, halfAngle: halfAngle, lineCount: 8)
         
         var vertices: [simd_float3] = []
@@ -273,51 +278,43 @@ public final class CMEGeometryBuilder: Sendable {
         var colors: [simd_float4] = []
         
         for _ in 0..<pointCount {
-            // Pick a random magnetic field line from the skeleton
             let line = skeleton.randomElement()!
-            
-            // Pick a random progression along the line (weighted towards the top)
-            let t = pow(Float.random(in: 0.1...1.0), 0.7)
+            let t = Float.random(in: 0.0...1.0)
             
             let centerPos = line.position(at: t)
             let tangent = line.tangent(at: t)
             
-            // Create a Frenet frame (perpendicular axes) around the tangent to create the twist
             let arbitrary = simd_float3(0, 1, 0)
             var binormal = simd_cross(tangent, arbitrary)
             if simd_length(binormal) < 0.001 { binormal = simd_cross(tangent, simd_float3(1, 0, 0)) }
             binormal = simd_normalize(binormal)
             let normal = simd_normalize(simd_cross(tangent, binormal))
             
-            // THE HELIX MATH: Twist the particle around the line based on how far out it is (t)
-            let twistAngle = t * .pi * 6.0
+            // Evaluates how far out into space we are
+            let outwardness = 1.0 - (abs(t - 0.5) * 2.0)
             
-            // The expansion: The tornado gets wider the further it gets from the surface
-            let expansionRadius = (solarRadius * 0.05) + (t * solarRadius * 0.4 * (halfAngle / 30.0))
+            let twistAngle = outwardness * .pi * 8.0
+            let expansionRadius = (solarRadius * 0.02) + (outwardness * solarRadius * 0.35 * (halfAngle / 30.0))
             
-            // Add some noise so it's a gas cloud, not a solid cylinder
             let noiseX = Float.random(in: -0.5...0.5) * expansionRadius
             let noiseY = Float.random(in: -0.5...0.5) * expansionRadius
             
             let xOffset = binormal * (cos(twistAngle) * expansionRadius + noiseX)
             let yOffset = normal * (sin(twistAngle) * expansionRadius + noiseY)
             
-            let finalPos = centerPos + xOffset + yOffset
-            vertices.append(finalPos)
-            
-            // Map the UVs for the shader (u = distance from sun, v = random flicker phase)
+            vertices.append(centerPos + xOffset + yOffset)
             texcoords.append(simd_float2(t, Float.random(in: 0.0...1.0)))
             
-            // Assign static velocity color based on 't'
-            let coreColor = simd_float4(1.0, 1.0, 1.0, 1.0) // White Hot
-            let midColor  = simd_float4(1.0, 0.8, 0.2, 1.0) // Yellow/Orange
-            let edgeColor = simd_float4(0.8, 0.1, 0.0, 1.0) // Deep Red
+            // DISSIPATE TO BLACKNESS: Fade Alpha to 0.0 as it reaches deep space
+            let coreColor = simd_float4(1.0, 1.0, 1.0, 1.0)
+            let midColor  = simd_float4(1.0, 0.6, 0.1, 0.6)
+            let edgeColor = simd_float4(0.6, 0.0, 0.0, 0.0) // Invisible red
             
             let color: simd_float4
-            if t < 0.3 {
-                color = mixColor(coreColor, midColor, factor: t / 0.3)
+            if outwardness < 0.3 {
+                color = mixColor(coreColor, midColor, factor: outwardness / 0.3)
             } else {
-                color = mixColor(midColor, edgeColor, factor: (t - 0.3) / 0.7)
+                color = mixColor(midColor, edgeColor, factor: (outwardness - 0.3) / 0.7)
             }
             colors.append(color)
         }
@@ -350,7 +347,8 @@ public final class CMEGeometryBuilder: Sendable {
             bytesPerIndex: MemoryLayout<Int32>.size
         )
         
-        element.pointSize = 3.0 // Ensures points are large enough to show the soft alpha mask
+        // BOOST VOLUMETRIC SOFTNESS: Double the point size to blend the soft radial textures heavily
+        element.pointSize = 6.0
         
         return SCNGeometry(sources: [source, uvSource, colorSource], elements: [element])
     }
@@ -359,6 +357,5 @@ public final class CMEGeometryBuilder: Sendable {
 // MARK: - Helper Math Functions
 fileprivate func mixColor(_ a: simd_float4, _ b: simd_float4, factor: Float) -> simd_float4 {
     let f = max(0.0, min(1.0, factor))
-    // simd types naturally support algebraic operations without extensions!
     return a + (b - a) * f
 }
