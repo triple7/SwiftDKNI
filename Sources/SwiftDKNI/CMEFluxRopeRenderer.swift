@@ -68,7 +68,10 @@ final public class CMEFluxRopeRenderer: Sendable {
         material.setValue(halfAngleRad, forKey: "u_halfAngle")
         
         geometry.materials = [material]
+        // Add the distortion bitmask to pick up the SCNTechnique
         
-        return SCNNode(geometry: geometry)
+        let node = SCNNode(geometry: geometry)
+        node.categoryBitMask = 1 << 2
+        return node
     }
 }

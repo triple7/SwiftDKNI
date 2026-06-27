@@ -26,14 +26,14 @@ public final class CMEGeometryBuilder: Sendable {
     private func createSoftGlowTexture() -> XImage {
         let size = CGSize(width: 64, height: 64)
         
-        #if os(macOS)
+#if os(macOS)
         let image = NSImage(size: size)
         image.lockFocus()
         let context = NSGraphicsContext.current!.cgContext
-        #else
+#else
         UIGraphicsBeginImageContextWithOptions(size, false, 0)
         let context = UIGraphicsGetCurrentContext()!
-        #endif
+#endif
         
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         let colors = [
@@ -45,14 +45,14 @@ public final class CMEGeometryBuilder: Sendable {
         let center = CGPoint(x: size.width / 2, y: size.height / 2)
         context.drawRadialGradient(gradient, startCenter: center, startRadius: 0, endCenter: center, endRadius: size.width / 2, options: [])
         
-        #if os(macOS)
+#if os(macOS)
         image.unlockFocus()
         return image
-        #else
+#else
         let image = UIGraphicsGetImageFromCurrentImageContext()!
         UIGraphicsEndImageContext()
         return image
-        #endif
+#endif
     }
     
     public func createMagneticLoopMaterial() -> SCNMaterial {
@@ -358,6 +358,57 @@ public final class CMEGeometryBuilder: Sendable {
         
         return SCNGeometry(sources: [source, uvSource, colorSource], elements: [element])
     }
+    
+    public func addDistortionTechniqueToScene(sceneView: SCNView) {
+        // 1. Resolve the Documents directory path
+        guard let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            print("Failed to find Documents directory.")
+            return
+        }
+        
+        // 2. Append the compiled Metal library filename
+        let libraryURL = documentsPath.appendingPathComponent("Distortion.metallib")
+        
+        let techniqueDict: [String: Any] = [
+            "passes": [
+                // PASS 1: Render ONLY the CME nodes into the CME_BUFFER
+                "cmePass": [
+                    "draw": "DRAW_SCENE",
+                    "inputs": [:],
+                    "outputs": [
+                        "color": "CME_BUFFER"
+                    ],
+                    // This is the magic key: Only render nodes where categoryBitMask == 4 (which is 1 << 2)
+                    "includeCategoryMask": 4
+                ],
+                // PASS 2: Composite the scene and the distorted CME_BUFFER
+                "distortionPass": [
+                    "draw": "DRAW_QUAD",
+                    "metalVertexShader": "distortionVertex",
+                    "metalFragmentShader": "distortionFragment",
+                    "metalLibraryName": libraryURL.path, // <--- LOAD FROM DOCUMENTS DIRECTORY
+                    "inputs": [
+                        "colorSampler": "COLOR",           // Standard scene render
+                        "refractionSampler": "CME_BUFFER", // Output from cmePass
+                        "time": "scn_frameTime"
+                    ],
+                    "outputs": ["color": "COLOR"]
+                ]
+            ],
+            "targets": [
+                "CME_BUFFER": [
+                    "type": "color",
+                    "size": "relative",
+                    "scaleFactor": 1.0,
+                    "pixelFormat": "rgba8" // Or rgba16f if you need HDR
+                ]
+            ],
+            "sequence": ["cmePass", "distortionPass"] // Execute in this order
+        ]
+        
+        sceneView.technique = SCNTechnique(dictionary: techniqueDict)
+    }
+    
 }
 
 // MARK: - Helper Math Functions
