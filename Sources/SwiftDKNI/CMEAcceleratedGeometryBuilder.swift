@@ -318,6 +318,7 @@ public final class CMEGeometryBuilder: Sendable {
             
         return SCNGeometry(sources: [vertexSource, normalSource], elements: [element])
     }
+
     // Helper to generate a constant array of 1.0s for vectorized subtraction
     private func positiveOneArray(count: Int) -> [Float] {
         return [Float](repeating: 1.0, count: count)
