@@ -130,12 +130,17 @@ public final class CMEGeometryBuilder: Sendable {
                         
                     // Temperature Gradient
                     let distanceFromApex = abs(t - 0.5) * 2.0
-                    let r: Float = 1.0
-                    let g: Float = 0.1 + (0.8 * distanceFromApex)
-                    let b: Float = 0.0 + (0.5 * distanceFromApex)
-                    let a: Float = 0.3 + (0.7 * distanceFromApex)
-                    colors.append(simd_float4(r, g, b, a))
-                        
+                    // If the longitude is between 0 and 90 (Front Right), paint it NEON GREEN
+                    if lonRad > 0.0 && lonRad < (.pi / 2.0) {
+                        colors.append(simd_float4(0.0, 1.0, 0.0, 1.0)) // Pure Green
+                    } else {
+                        // Normal color math
+                        let r: Float = 1.0
+                        let g: Float = 0.1 + (0.8 * distanceFromApex)
+                        let b: Float = 0.0 + (0.5 * distanceFromApex)
+                        let a: Float = 0.3 + (0.7 * distanceFromApex)
+                        colors.append(simd_float4(r, g, b, a))
+                    }
                     // UV track
                     let trackPosition = flowsForward ? t : (1.0 - t)
                     uvs.append(simd_float2(trackPosition, phaseOffset))
