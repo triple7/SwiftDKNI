@@ -160,9 +160,9 @@ public final class CMEGeometryBuilder: Sendable {
         right = simd_normalize(right)
         let localUp = simd_normalize(simd_cross(right, centerDir))
         
-        // TIGHTEN THE SCALE: Constrain the max outward stretch so it doesn't dwarf the sun
-        let heightMultiplier = 0.6 + (speed / 2000.0)
-        let spreadRad = (halfAngle > 0 ? halfAngle : 15.0) * .pi / 180.0 * 0.6
+        // INCREASE THE SCALE: Push the tip further out to allow room for the greyish fade
+        let heightMultiplier = 1.0 + (speed / 1500.0)
+        let spreadRad = (halfAngle > 0 ? halfAngle : 15.0) * .pi / 180.0 * 0.75
         
         for _ in 0..<lineCount {
             let r1 = Float.random(in: -1.0...1.0) * spreadRad
@@ -213,16 +213,19 @@ public final class CMEGeometryBuilder: Sendable {
                 // Calculates how far out into space we are (0.0 = surface roots, 1.0 = deep space apex)
                 let outwardness = 1.0 - (abs(t - 0.5) * 2.0)
                 
-                // Dissipates to 0.0 Alpha to perfectly blend into black space
+                // 3-Stage Dissipation: White -> Red -> Grey/Black
                 let coreColor = simd_float4(1.0, 1.0, 1.0, 0.9)
-                let midColor  = simd_float4(1.0, 0.7, 0.1, 0.5)
-                let edgeColor = simd_float4(0.8, 0.0, 0.0, 0.0) // Invisible red
+                let midColor  = simd_float4(1.0, 0.7, 0.1, 0.6)
+                let redColor  = simd_float4(0.8, 0.1, 0.0, 0.3)
+                let tipColor  = simd_float4(0.05, 0.05, 0.05, 0.0) // Faded greyish black tip
                 
                 let color: simd_float4
-                if outwardness < 0.4 {
-                    color = mixColor(coreColor, midColor, factor: outwardness / 0.4)
+                if outwardness < 0.25 {
+                    color = mixColor(coreColor, midColor, factor: outwardness / 0.25)
+                } else if outwardness < 0.6 {
+                    color = mixColor(midColor, redColor, factor: (outwardness - 0.25) / 0.35)
                 } else {
-                    color = mixColor(midColor, edgeColor, factor: (outwardness - 0.4) / 0.6)
+                    color = mixColor(redColor, tipColor, factor: (outwardness - 0.6) / 0.4)
                 }
                 colors.append(color)
                 
@@ -305,16 +308,19 @@ public final class CMEGeometryBuilder: Sendable {
             vertices.append(centerPos + xOffset + yOffset)
             texcoords.append(simd_float2(t, Float.random(in: 0.0...1.0)))
             
-            // DISSIPATE TO BLACKNESS: Fade Alpha to 0.0 as it reaches deep space
+            // 3-Stage Dissipation: White -> Red -> Grey/Black
             let coreColor = simd_float4(1.0, 1.0, 1.0, 1.0)
-            let midColor  = simd_float4(1.0, 0.6, 0.1, 0.6)
-            let edgeColor = simd_float4(0.6, 0.0, 0.0, 0.0) // Invisible red
+            let midColor  = simd_float4(1.0, 0.6, 0.1, 0.7)
+            let redColor  = simd_float4(0.7, 0.05, 0.0, 0.4)
+            let tipColor  = simd_float4(0.05, 0.05, 0.05, 0.0) // Faded greyish black tip
             
             let color: simd_float4
-            if outwardness < 0.3 {
-                color = mixColor(coreColor, midColor, factor: outwardness / 0.3)
+            if outwardness < 0.25 {
+                color = mixColor(coreColor, midColor, factor: outwardness / 0.25)
+            } else if outwardness < 0.6 {
+                color = mixColor(midColor, redColor, factor: (outwardness - 0.25) / 0.35)
             } else {
-                color = mixColor(midColor, edgeColor, factor: (outwardness - 0.3) / 0.7)
+                color = mixColor(redColor, tipColor, factor: (outwardness - 0.6) / 0.4)
             }
             colors.append(color)
         }
