@@ -192,14 +192,36 @@ extension SwiftDKNI {
                 #pragma transparent
                 #pragma body
 
+                // 1. Sample the real-time SDO AIA 193 texture
                 float3 textureColor = _surface.diffuse.rgb;
                 float luminance = dot(textureColor, float3(0.299, 0.587, 0.114));
-                float alphaMask = smoothstep(0.15, 0.4, luminance);
 
-                float3 atmosphereColor = float3(0.7, 0.85, 1.0); 
-                _surface.diffuse = float4(atmosphereColor, alphaMask * 0.4); 
+                // 2. The Fresnel Calculation: Determine the viewing angle
+                // 'viewDir' is the vector from the camera to the pixel.
+                // 'normal' is the surface direction pointing outward.
+                float3 N = normalize(_surface.normal);
+                float3 V = normalize(_surface.viewDir);
+
+                // dot(N, V) is 1.0 at the absolute center of the star, and drops to 0.0 at the exact horizon edge.
+                float edgeFade = dot(N, V);
+
+                // 3. Create the organic atmosphere falloff
+                // We want the atmosphere to be invisible in the middle, swell slightly near the edges, 
+                // but smoothly drop to 0 opacity right before it hits the hard geometry edge.
+                float atmosphereGlow = pow(1.0 - edgeFade, 3.0) * edgeFade;
+
+                // 4. Layer the Coronal Holes back in
+                // Instead of a harsh cut, the coronal holes smoothly damp down the glow intensity.
+                float holeMask = smoothstep(0.05, 0.6, luminance);
+
+                // Combine the organic glow profile with the dynamic solar data
+                float finalAlpha = atmosphereGlow * holeMask;
+
+                // 5. Output a natural, hot-plasma cream/pale-gold atmospheric haze
+                float3 plasmaColor = float3(0.95, 0.85, 0.7); 
+                _surface.diffuse = float4(plasmaColor, finalAlpha * 0.6); // 60% peak opacity within the cloud
                 """
-
+                
                 haloMaterial.shaderModifiers = [
                     .surface: coronalHoleShader
                 ]
