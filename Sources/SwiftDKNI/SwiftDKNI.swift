@@ -228,38 +228,38 @@ extension SwiftDKNI {
     }
     
     public func addDistortionTechniqueToScene(sceneView: SCNView) {
-        
         let techniqueDict: [String: Any] = [
             "symbols": [
                 "timeSymbol": [
-                    "semantic": "time", // Tells SceneKit to pass the system time automatically
+                    "semantic": "time",
                     "type": "float"
                 ]
             ],
             "passes": [
-                // PASS 1: Render ONLY the CME nodes into the CME_BUFFER
+                // PASS 1: Render the whole scene (Sun + Skybox) into SCENE_BUFFER
+                "mainScenePass": [
+                    "draw": "DRAW_SCENE",
+                    "inputs": [:],
+                    "outputs": ["color": "SCENE_BUFFER"]
+                ],
+                // PASS 2: Render ONLY the CMEs into CME_BUFFER
                 "cmePass": [
                     "draw": "DRAW_SCENE",
                     "inputs": [:],
-                    "outputs": [
-                        "color": "CME_BUFFER"
-                    ],
-                    // This is the magic key: Only render nodes where categoryBitMask == 4 (which is 1 << 2)
+                    "outputs": ["color": "CME_BUFFER"],
                     "includeCategoryMask": 4
                 ],
-                // PASS 2: Composite the scene and the distorted CME_BUFFER
+                // PASS 3: Composite the scene and the distorted CME_BUFFER
                 "distortionPass": [
                     "draw": "DRAW_QUAD",
                     "metalVertexShader": "distortionVertex",
                     "metalFragmentShader": "distortionFragment",
                     "inputs": [
-                        "colorSampler": "COLOR",           // Standard scene render
-                        "refractionSampler": "CME_BUFFER", // Output from cmePass
-                        "time": "timeSymbol"               // Mapped to the symbol defined above
+                        "colorSampler": "SCENE_BUFFER",    // Reads from SCENE_BUFFER
+                        "refractionSampler": "CME_BUFFER",
+                        "time": "timeSymbol"
                     ],
-                    "outputs": [
-                        "color": "COLOR"
-                    ]
+                    "outputs": ["color": "COLOR"]          // Outputs to the final screen
                 ]
             ],
             "targets": [
@@ -267,10 +267,16 @@ extension SwiftDKNI {
                     "type": "color",
                     "size": "relative",
                     "scaleFactor": 1.0,
-                    "pixelFormat": "rgba8" // Or rgba16f if you need HDR
+                    "pixelFormat": "rgba8"
+                ],
+                "SCENE_BUFFER": [
+                    "type": "color",
+                    "size": "relative",
+                    "scaleFactor": 1.0,
+                    "pixelFormat": "rgba8"
                 ]
             ],
-            "sequence": ["cmePass", "distortionPass"] // Execute in this specific order
+            "sequence": ["mainScenePass", "cmePass", "distortionPass"]
         ]
         
         sceneView.technique = SCNTechnique(dictionary: techniqueDict)
