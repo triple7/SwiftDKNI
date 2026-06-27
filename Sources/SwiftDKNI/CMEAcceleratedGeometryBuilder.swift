@@ -7,25 +7,22 @@
 
 
 import SceneKit
+import CoreGraphics
 import Accelerate
 import simd
 
-private struct ConcurrentPointer<T>: @unchecked Sendable {
-    let baseAddress: UnsafeMutablePointer<T>
-}
-
+/// Handles the mathematical generation of Flux Ropes, Helical CME particles, and Magnetic Loops
 public final class CMEGeometryBuilder: Sendable {
     
-    /// Generates a boundary shell point cloud geometry utilizing modern Apple Accelerate Swift wrappers.
-    /// - Parameters:
-    ///   - event: The averaged space weather dataset.
-    ///   - pointCount: Total number of vertices to generate for the shell.
-    ///   - solarRadius: The radius of your central SCNSphere node.
+    public init() {}
+    
     private struct ConcurrentPointer<T>: @unchecked Sendable {
         let baseAddress: UnsafeMutablePointer<T>
     }
-
-    // Generates a soft, blurry white circle in memory
+    
+    // MARK: - 1. Material & Shader Generation
+    
+    /// Generates a soft white-to-transparent radial gradient in memory
     private func createSoftGlowTexture() -> XImage {
         let size = CGSize(width: 64, height: 64)
         
@@ -57,161 +54,42 @@ public final class CMEGeometryBuilder: Sendable {
         return image
         #endif
     }
-
-    func createMagneticLoopMaterial() -> SCNMaterial {
+    
+    public func createMagneticLoopMaterial() -> SCNMaterial {
         let material = SCNMaterial()
         material.lightingModel = .constant
         
-        // --- THE FIX: Swap hard white for the soft gradient mask ---
+        // Use the soft radial gradient to turn harsh pixels into volumetric plasma
         material.diffuse.contents = createSoftGlowTexture()
-        
         material.blendMode = .add
         material.isDoubleSided = true
         material.writesToDepthBuffer = false
         
-        // --- THE FLOW SHADER ---
         let flowShader = """
         #pragma transparent
         
-        // 1. Read the custom UV track using SceneKit's Metal surface struct
+        // Read the custom UV track (x = curve position, y = random phase)
         float trackPosition = _surface.diffuseTexcoord.x;
         float phaseOffset = _surface.diffuseTexcoord.y;
         
-        // 2. Control the speed of the plasma flow
         float speed = 0.6; 
-        
-        // 3. The Math: Metal uses scn_frame.time instead of old GLSL u_time
         float flow = fract(trackPosition - (scn_frame.time * speed) + phaseOffset);
         
-        // 4. Shape the "Pulse". We invert the flow so the head is 1.0 and the tail fades to 0.0
+        // Shape the pulse: bright head, trailing tail
         float tail = 1.0 - flow;
-        
-        // 5. Sharpen the pulse using a power curve. 
-        // An exponent of 8.0 makes a tight, bright head with a fast-fading tail.
         float pulse = max(0.1, pow(tail, 8.0));
         
-        // 6. Apply the mask to the existing vertex colors
+        // Multiply vertex emission and texture alpha by the velocity pulse
         _surface.emission *= pulse;
-        
-        // Because we put the soft mask in the diffuse channel, SceneKit automatically 
-        // loads its alpha into _surface.transparent.a. 
-        // Multiplying it by 'pulse' perfectly merges your flow animation with the soft edges!
         _surface.transparent.a *= pulse;
         """
         
-        // Inject the shader into the surface rendering pass
         material.shaderModifiers = [.surface: flowShader]
-        
         return material
     }
-    func buildMagneticLoops(for event: AveragedCMEData, loopCount: Int = 40, pointsPerLoop: Int = 50, solarRadius: Float = 1.0) -> SCNGeometry {
-                
-            let latRad = Float(event.latitude ?? 0.0) * .pi / 180.0
-                
-            // --- Apply the temporal rotation offset ---
-            let rotatedLon = calculateRotatedLongitude(originalLongitude: Float(event.longitude ?? 0.0), eventDate: event.parsedDate)
-            let lonRad = rotatedLon * .pi / 180.0
-        let timeInterval = Date().timeIntervalSince(event.parsedDate ?? Date())
-        let daysPassed = Float(timeInterval / 86400.0)
-//        print("🎯 ROTATION TRACE | Days Ago: \(String(format: "%.1f", daysPassed)) | Orig Lon: \(event.longitude ?? 0.0) -> New Lon: \(String(format: "%.1f", rotatedLon))")
-        // ------------------------------
-        
-            // --- NEW: 90-Degree Phase Shift (Align Earth to Camera Z-Axis) ---
-            // Swapped sin(lonRad) and cos(lonRad) on the X and Z axes
-            let coreNormal = simd_float3(
-                cos(latRad) * sin(lonRad),
-                sin(latRad),
-                cos(latRad) * cos(lonRad)
-            )
-                
-            let up = abs(coreNormal.y) > 0.99 ? simd_float3(1, 0, 0) : simd_float3(0, 1, 0)
-            let tangent = simd_normalize(simd_cross(up, coreNormal))
-            let bitangent = simd_normalize(simd_cross(coreNormal, tangent))
-                
-            var vertices: [simd_float3] = []
-            var colors: [simd_float4] = []
-            var uvs: [simd_float2] = []
-            var indices: [Int32] = []
-            var currentIndex: Int32 = 0
-                
-            for _ in 0..<loopCount {
-                let footprintSpread = Float.random(in: 0.02...0.15)
-                let angle = Float.random(in: 0...(2 * .pi))
-                let offset = (tangent * cos(angle) + bitangent * sin(angle)) * footprintSpread
-                    
-                var startPoint = simd_normalize(coreNormal + offset)
-                var endPoint = simd_normalize(coreNormal - offset)
-                startPoint *= solarRadius
-                endPoint *= solarRadius
-                    
-                let loopHeight = Float(event.speed) * 0.0001 * Float.random(in: 0.2...0.6)
-                var controlPoint = simd_normalize(coreNormal)
-                controlPoint *= (solarRadius + loopHeight)
-                    
-                let phaseOffset = Float.random(in: 0.0...1.0)
-                let flowsForward = Bool.random()
-                    
-                for i in 0..<pointsPerLoop {
-                    let t = Float(i) / Float(pointsPerLoop - 1)
-                    let oneMinusT = 1.0 - t
-                        
-                    // Geometry Math
-                    let p0 = startPoint * (oneMinusT * oneMinusT)
-                    let p1 = controlPoint * (2.0 * oneMinusT * t)
-                    let p2 = endPoint * (t * t)
-                    vertices.append(p0 + p1 + p2)
-                        
-                    // Temperature Gradient
-                    let distanceFromApex = abs(t - 0.5) * 2.0
-                        // Normal color math
-                        let r: Float = 1.0
-                        let g: Float = 0.1 + (0.8 * distanceFromApex)
-                        let b: Float = 0.0 + (0.5 * distanceFromApex)
-                        let a: Float = 0.3 + (0.7 * distanceFromApex)
-                        colors.append(simd_float4(r, g, b, a))
-                    // UV track
-                    let trackPosition = flowsForward ? t : (1.0 - t)
-                    uvs.append(simd_float2(trackPosition, phaseOffset))
-                        
-                    if i > 0 {
-                        indices.append(currentIndex - 1)
-                        indices.append(currentIndex)
-                    }
-                    currentIndex += 1
-                }
-            }
-                
-            let vertexData = Data(bytes: vertices, count: vertices.count * MemoryLayout<simd_float3>.size)
-            let colorData = Data(bytes: colors, count: colors.count * MemoryLayout<simd_float4>.size)
-            let uvData = Data(bytes: uvs, count: uvs.count * MemoryLayout<simd_float2>.size)
-                
-            let vertexSource = SCNGeometrySource(
-                data: vertexData, semantic: .vertex, vectorCount: vertices.count,
-                usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size,
-                dataOffset: 0, dataStride: MemoryLayout<simd_float3>.size
-            )
-                
-            let colorSource = SCNGeometrySource(
-                data: colorData, semantic: .color, vectorCount: colors.count,
-                usesFloatComponents: true, componentsPerVector: 4, bytesPerComponent: MemoryLayout<Float>.size,
-                dataOffset: 0, dataStride: MemoryLayout<simd_float4>.size
-            )
-                
-            let uvSource = SCNGeometrySource(
-                data: uvData, semantic: .texcoord, vectorCount: uvs.count,
-                usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size,
-                dataOffset: 0, dataStride: MemoryLayout<simd_float2>.size
-            )
-                
-            let indexData = Data(bytes: indices, count: indices.count * MemoryLayout<Int32>.size)
-            let element = SCNGeometryElement(
-                data: indexData, primitiveType: .line, primitiveCount: indices.count / 2,
-                bytesPerIndex: MemoryLayout<Int32>.size
-            )
-                
-            return SCNGeometry(sources: [vertexSource, colorSource, uvSource], elements: [element])
-        }
-
+    
+    // MARK: - 2. Temporal Math
+    
     /// Calculates the current physical longitude of a historical solar event
     /// by factoring in the Sun's average synodic rotation rate (13.2 degrees/day).
     func calculateRotatedLongitude(originalLongitude: Float, eventDate: Date?, currentDate: Date = Date()) -> Float {
@@ -243,121 +121,247 @@ public final class CMEGeometryBuilder: Sendable {
         
         return newLongitude
     }
-
-    func buildBoundaryShellAccelerated(for event: AveragedCMEData, pointCount: Int = 10000, solarRadius: Float = 1.0) -> SCNGeometry {
-            
-        // 1. Generate uniform random distribution vectors
-        let u = (0..<pointCount).map { _ in Float.random(in: 0...1) }
-        let v = (0..<pointCount).map { _ in Float.random(in: 0...1) }
-        let w = (0..<pointCount).map { _ in Float.random(in: 0...1) }
-            
-        // Pre-allocate destination buffers
-        var zLocal = [Float](repeating: 0.0, count: pointCount)
-        var xLocal = [Float](repeating: 0.0, count: pointCount)
-        var yLocal = [Float](repeating: 0.0, count: pointCount)
-        var radii  = [Float](repeating: 0.0, count: pointCount)
-            
-        let halfAngleRad = Float(event.halfAngle) * .pi / 180.0
-        let cosMaxAngle = cos(halfAngleRad)
-        let oneMinusCosMax = 1.0 - cosMaxAngle
-        let twoPi = 2.0 * Float.pi
-            
-        // 2. Vectorized Math Operations
-        let phi = vDSP.multiply(twoPi, u)
-        let sinPhi = vForce.sin(phi)
-        let cosPhi = vForce.cos(phi)
-            
-        vDSP.multiply(oneMinusCosMax, v, result: &zLocal)
-        vDSP.add(cosMaxAngle, zLocal, result: &zLocal)
-            
-        let zSquared = vDSP.square(zLocal)
-        let negativeZSquared = vDSP.multiply(-1.0, zSquared)
-        let oneMinusZSquared = vDSP.add(1.0, negativeZSquared)
-        let sinTheta = vForce.sqrt(oneMinusZSquared)
-
-        vDSP.multiply(sinTheta, cosPhi, result: &xLocal)
-        vDSP.multiply(sinTheta, sinPhi, result: &yLocal)
-            
-        let visualSpeedScale: Float = 0.001
-        let cmeHeight = Float(event.speed) * visualSpeedScale
-            
-        vDSP.multiply(cmeHeight, w, result: &radii)
-        vDSP.add(solarRadius, radii, result: &radii)
-            
-        // 3. Compute Rotation Alignment using Temporal Offset
-        let latRad = Float(event.latitude ?? 0.0) * .pi / 180.0
+    
+    // MARK: - 3. The Flux Rope Mathematics
+    
+    /// A single Bezier curve representing a stretched magnetic field line
+    private struct MagneticFieldLine {
+        let p0: SCNVector3 // Root 1
+        let p1: SCNVector3 // Apex (Stretched by solar wind/ejection)
+        let p2: SCNVector3 // Root 2
         
-        // TEMPORAL OFFSET INJECTION
+        // Evaluates position along the curve (t = 0.0 to 1.0)
+        func position(at t: Float) -> SCNVector3 {
+            let u = 1.0 - t
+            let tt = t * t
+            let uu = u * u
+            
+            let term1 = p0 * uu
+            let term2 = p1 * (2.0 * u * t)
+            let term3 = p2 * tt
+            
+            return term1 + term2 + term3
+        }
+        
+        // Evaluates the forward direction (tangent) along the curve
+        func tangent(at t: Float) -> SCNVector3 {
+            let u = 1.0 - t
+            let dP1 = (p1 - p0) * (2.0 * u)
+            let dP2 = (p2 - p1) * (2.0 * t)
+            return (dP1 + dP2).normalized()
+        }
+    }
+    
+    /// Generates the mathematical skeleton for both the loops and the particles to share
+    private func generateFluxRopeSkeleton(lat: Float, lon: Float, radius: Float, speed: Float, halfAngle: Float, lineCount: Int) -> [MagneticFieldLine] {
+        var lines: [MagneticFieldLine] = []
+        
+        let latRad = lat * .pi / 180.0
+        let lonRad = lon * .pi / 180.0
+        
+        // Center point of the eruption on the surface
+        let centerDir = SCNVector3(
+            cos(latRad) * sin(lonRad),
+            sin(latRad),
+            cos(latRad) * cos(lonRad)
+        )
+        
+        // Establish a local coordinate system to spread the roots
+        let up = SCNVector3(0, 1, 0)
+        var right = centerDir.cross(up)
+        if right.length() < 0.001 { right = SCNVector3(1, 0, 0) }
+        right = right.normalized()
+        let localUp = right.cross(centerDir).normalized()
+        
+        // The force of the CME stretches the loops massively outward
+        let heightMultiplier = 1.2 + (speed / 1000.0) // Faster CMEs stretch loops higher
+        let spreadRad = (halfAngle > 0 ? halfAngle : 20.0) * .pi / 180.0
+        
+        for _ in 0..<lineCount {
+            // Randomize root spread on the surface
+            let r1 = Float.random(in: -1.0...1.0) * spreadRad
+            let r2 = Float.random(in: -1.0...1.0) * spreadRad
+            let rootOffset1 = (right * r1) + (localUp * r2)
+            let rootOffset2 = (right * -r1) + (localUp * -r2) // Opposite side of the active region
+            
+            let p0 = (centerDir + rootOffset1).normalized() * radius
+            let p2 = (centerDir + rootOffset2).normalized() * radius
+            
+            // The Skew: Push the apex outward along the eruption vector, blowing it into space
+            let outwardSkew = centerDir * (radius * heightMultiplier)
+            let noiseOffset = (right * Float.random(in: -0.2...0.2)) + (localUp * Float.random(in: -0.2...0.2))
+            
+            let p1 = (centerDir * radius) + outwardSkew + (noiseOffset * radius)
+            
+            lines.append(MagneticFieldLine(p0: p0, p1: p1, p2: p2))
+        }
+        
+        return lines
+    }
+    
+    // MARK: - 4. Geometry Generators
+    
+    /// Builds the visible magnetic arches
+    public func buildMagneticLoops(for event: AveragedCMEData, loopCount: Int = 40, pointsPerLoop: Int = 50, solarRadius: Float = 1.0) -> SCNGeometry {
+        let lat = Float(event.latitude ?? 0.0)
         let rotatedLon = calculateRotatedLongitude(originalLongitude: Float(event.longitude ?? 0.0), eventDate: event.parsedDate)
-        let lonRad = rotatedLon * .pi / 180.0
-            
-        // Swapped sin/cos on X and Z to map Longitude 0 (Earth) directly to the front of the camera
-        let targetX = cos(latRad) * sin(lonRad)
-        let targetY = sin(latRad)
-        let targetZ = cos(latRad) * cos(lonRad)
-        let defaultAxis = simd_float3(0, 0, 1)
-        let targetAxis = simd_float3(targetX, targetY, targetZ)
-
-        let quaternion = simd_quatf(from: defaultAxis, to: targetAxis)
-        let rotationMatrix = simd_matrix3x3(quaternion)
-            
-        // 4. Parallel batch transformation across CPU cores
-        var vertices = [simd_float3](repeating: simd_float3(0, 0, 0), count: pointCount)
-        var normals = [simd_float3](repeating: simd_float3(0, 0, 0), count: pointCount)
         
-        let safeX = xLocal
-        let safeY = yLocal
-        let safeZ = zLocal
-        let safeRadii = radii
+        let speed = Float(event.speed)
+        let halfAngle = Float(event.halfAngle)
+        
+        // Use the new skewed math but map it to your loopCount and pointsPerLoop
+        let skeleton = generateFluxRopeSkeleton(lat: lat, lon: rotatedLon, radius: solarRadius, speed: speed, halfAngle: halfAngle, lineCount: loopCount)
+        
+        var vertices: [SCNVector3] = []
+        var indices: [Int32] = []
+        var texcoords: [CGPoint] = [] // u = t, v = phase
+        
+        var currentIndex: Int32 = 0
+        
+        for line in skeleton {
+            let phase = Float.random(in: 0.0...1.0)
             
-        vertices.withUnsafeMutableBufferPointer { vBuffer in
-            normals.withUnsafeMutableBufferPointer { nBuffer in
-                    
-                guard let vBase = vBuffer.baseAddress,
-                      let nBase = nBuffer.baseAddress else { return }
-                    
-                let vConcurrent = ConcurrentPointer(baseAddress: vBase)
-                let nConcurrent = ConcurrentPointer(baseAddress: nBase)
-                    
-                DispatchQueue.concurrentPerform(iterations: pointCount) { idx in
-                    let localVec = simd_float3(safeX[idx], safeY[idx], safeZ[idx])
-                    let alignedDirection = rotationMatrix * localVec
-                        
-                    nConcurrent.baseAddress[idx] = alignedDirection
-                    vConcurrent.baseAddress[idx] = alignedDirection * safeRadii[idx]
+            for i in 0...pointsPerLoop {
+                let t = Float(i) / Float(pointsPerLoop)
+                vertices.append(line.position(at: t))
+                texcoords.append(CGPoint(x: CGFloat(t), y: CGFloat(phase)))
+                
+                if i > 0 {
+                    indices.append(currentIndex - 1)
+                    indices.append(currentIndex)
                 }
+                currentIndex += 1
             }
         }
-            
-        // 5. Build SCNGeometry Layout Structures
-        let vertexData = Data(bytes: vertices, count: pointCount * MemoryLayout<simd_float3>.size)
-        let normalData = Data(bytes: normals, count: pointCount * MemoryLayout<simd_float3>.size)
-            
-        let vertexSource = SCNGeometrySource(
-            data: vertexData, semantic: .vertex, vectorCount: pointCount,
-            usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size,
-            dataOffset: 0, dataStride: MemoryLayout<simd_float3>.size
-        )
-            
-        let normalSource = SCNGeometrySource(
-            data: normalData, semantic: .normal, vectorCount: pointCount,
-            usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size,
-            dataOffset: 0, dataStride: MemoryLayout<simd_float3>.size
-        )
-            
-        let indices = Array(0..<Int32(pointCount))
-        let indexData = Data(bytes: indices, count: indices.count * MemoryLayout<Int32>.size)
-            
-        let element = SCNGeometryElement(
-            data: indexData, primitiveType: .point, primitiveCount: pointCount,
-            bytesPerIndex: MemoryLayout<Int32>.size
-        )
-            
-        return SCNGeometry(sources: [vertexSource, normalSource], elements: [element])
+        
+        let source = SCNGeometrySource(vertices: vertices)
+        let uvSource = SCNGeometrySource(textureCoordinates: texcoords)
+        let element = SCNGeometryElement(indices: indices, primitiveType: .line)
+        
+        return SCNGeometry(sources: [source, uvSource], elements: [element])
     }
-
-    // Helper to generate a constant array of 1.0s for vectorized subtraction
-    private func positiveOneArray(count: Int) -> [Float] {
-        return [Float](repeating: 1.0, count: count)
+    
+    /// Builds the helical CME point cloud spiraling around the magnetic lines.
+    /// Retains the original function name so renderer calls don't break.
+    public func buildBoundaryShellAccelerated(for event: AveragedCMEData, pointCount: Int = 10000, solarRadius: Float = 1.0) -> SCNGeometry {
+        let lat = Float(event.latitude ?? 0.0)
+        let rotatedLon = calculateRotatedLongitude(originalLongitude: Float(event.longitude ?? 0.0), eventDate: event.parsedDate)
+        
+        let speed = Float(event.speed)
+        let halfAngle = Float(event.halfAngle)
+        
+        // We use fewer skeleton lines for the particles to form distinct "strands" in the tornado
+        let skeleton = generateFluxRopeSkeleton(lat: lat, lon: rotatedLon, radius: solarRadius, speed: speed, halfAngle: halfAngle, lineCount: 8)
+        
+        var vertices: [SCNVector3] = []
+        var texcoords: [CGPoint] = [] // u = progression (t), v = random phase
+        var colors: [SCNVector4] = [] // Velocity color gradient
+        
+        for _ in 0..<pointCount {
+            // Pick a random magnetic field line from the skeleton
+            let line = skeleton.randomElement()!
+            
+            // Pick a random progression along the line (weighted towards the top)
+            let t = pow(Float.random(in: 0.1...1.0), 0.7)
+            
+            let centerPos = line.position(at: t)
+            let tangent = line.tangent(at: t)
+            
+            // Create a Frenet frame (perpendicular axes) around the tangent to create the twist
+            let arbitrary = SCNVector3(0, 1, 0)
+            var binormal = tangent.cross(arbitrary)
+            if binormal.length() < 0.001 { binormal = tangent.cross(SCNVector3(1, 0, 0)) }
+            binormal = binormal.normalized()
+            let normal = tangent.cross(binormal).normalized()
+            
+            // THE HELIX MATH: Twist the particle around the line based on how far out it is (t)
+            // It completes ~3 full rotations (3 * 2pi) as it travels outward
+            let twistAngle = t * .pi * 6.0
+            
+            // The expansion: The tornado gets wider the further it gets from the surface
+            let expansionRadius = (solarRadius * 0.05) + (t * solarRadius * 0.4 * (halfAngle / 30.0))
+            
+            // Add some noise so it's a gas cloud, not a solid cylinder
+            let noiseX = Float.random(in: -0.5...0.5) * expansionRadius
+            let noiseY = Float.random(in: -0.5...0.5) * expansionRadius
+            
+            let xOffset = binormal * (cos(twistAngle) * expansionRadius + noiseX)
+            let yOffset = normal * (sin(twistAngle) * expansionRadius + noiseY)
+            
+            let finalPos = centerPos + xOffset + yOffset
+            vertices.append(finalPos)
+            
+            // Map the UVs for the shader (u = distance from sun, v = random flicker phase)
+            texcoords.append(CGPoint(x: CGFloat(t), y: CGFloat(Float.random(in: 0.0...1.0))))
+            
+            // Assign static velocity color based on 't'
+            let coreColor = SCNVector4(1.0, 1.0, 1.0, 1.0) // White Hot
+            let midColor = SCNVector4(1.0, 0.8, 0.2, 1.0)  // Yellow/Orange
+            let edgeColor = SCNVector4(0.8, 0.1, 0.0, 1.0) // Deep Red
+            
+            let color: SCNVector4
+            if t < 0.3 {
+                color = mix(coreColor, midColor, factor: t / 0.3)
+            } else {
+                color = mix(midColor, edgeColor, factor: (t - 0.3) / 0.7)
+            }
+            colors.append(color)
+        }
+        
+        let source = SCNGeometrySource(vertices: vertices)
+        let uvSource = SCNGeometrySource(textureCoordinates: texcoords)
+        let colorData = Data(bytes: colors, count: colors.count * MemoryLayout<SCNVector4>.size)
+        let colorSource = SCNGeometrySource(data: colorData,
+                                            semantic: .color,
+                                            vectorCount: colors.count,
+                                            usesFloatComponents: true,
+                                            componentsPerVector: 4,
+                                            bytesPerComponent: MemoryLayout<Float>.size,
+                                            dataOffset: 0,
+                                            dataStride: MemoryLayout<SCNVector4>.size)
+        
+        let element = SCNGeometryElement(indices: Array(0..<Int32(pointCount)), primitiveType: .point)
+        element.pointSize = 3.0 // Ensures points are large enough to show the soft alpha mask
+        
+        return SCNGeometry(sources: [source, uvSource, colorSource], elements: [element])
     }
 }
+
+// MARK: - Helper Math Functions
+
+fileprivate func mix(_ a: SCNVector4, _ b: SCNVector4, factor: Float) -> SCNVector4 {
+    let f = max(0.0, min(1.0, factor))
+    return SCNVector4(
+        a.x + (b.x - a.x) * f,
+        a.y + (b.y - a.y) * f,
+        a.z + (b.z - a.z) * f,
+        a.w + (b.w - a.w) * f
+    )
+}
+
+// MARK: - SCNVector3 Math Extensions
+
+fileprivate extension SCNVector3 {
+    static func +(l: SCNVector3, r: SCNVector3) -> SCNVector3 { return SCNVector3(l.x+r.x, l.y+r.y, l.z+r.z) }
+    static func -(l: SCNVector3, r: SCNVector3) -> SCNVector3 { return SCNVector3(l.x-r.x, l.y-r.y, l.z-r.z) }
+    static func *(vector: SCNVector3, scalar: Float) -> SCNVector3 { return SCNVector3(vector.x * scalar, vector.y * scalar, vector.z * scalar) }
+    static func /(vector: SCNVector3, scalar: Float) -> SCNVector3 { return SCNVector3(vector.x / scalar, vector.y / scalar, vector.z / scalar) }
+    
+    func length() -> Float {
+        return sqrt(x*x + y*y + z*z)
+    }
+    
+    func normalized() -> SCNVector3 {
+        let len = length()
+        return len > 0.0001 ? self / len : SCNVector3(0, 0, 0)
+    }
+    
+    func cross(_ vector: SCNVector3) -> SCNVector3 {
+        return SCNVector3(
+            y * vector.z - z * vector.y,
+            z * vector.x - x * vector.z,
+            x * vector.y - y * vector.x
+        )
+    }
+}
+
