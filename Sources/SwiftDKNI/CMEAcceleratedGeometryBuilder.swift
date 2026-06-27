@@ -76,7 +76,8 @@ public final class CMEGeometryBuilder: Sendable {
             let latRad = Float(event.latitude ?? 0.0) * .pi / 180.0
             
             // --- NEW: Apply the temporal rotation offset ---
-            let rotatedLon = calculateRotatedLongitude(originalLongitude: Float(event.longitude ?? 0.0), eventDate: event.parsedDate)
+        print("🎯 DEBUG CME - Raw String: '\(event.startTime ?? "NIL")' | Parsed: \(String(describing: event.parsedDate)) | Orig Lon: \(event.longitude ?? 0.0)")
+        let rotatedLon = calculateRotatedLongitude(originalLongitude: Float(event.longitude ?? 0.0), eventDate: event.parsedDate)
             let lonRad = rotatedLon * .pi / 180.0
             // -----------------------------------------------
             
