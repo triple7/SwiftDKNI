@@ -267,13 +267,13 @@ extension SwiftDKNI {
                     "type": "color",
                     "size": "relative",
                     "scaleFactor": 1.0,
-                    "pixelFormat": "rgba32float"
+                    "pixelFormat": "rgba8"
                 ],
                 "SCENE_BUFFER": [
                     "type": "color",
                     "size": "relative",
                     "scaleFactor": 1.0,
-                    "pixelFormat": "rgba32float"
+                    "pixelFormat": "rgba8"
                 ]
             ],
             "sequence": ["mainScenePass", "cmePass", "distortionPass"]
