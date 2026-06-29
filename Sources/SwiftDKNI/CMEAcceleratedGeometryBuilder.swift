@@ -389,6 +389,7 @@ public final class CMEGeometryBuilder: Sendable {
     
     /// Builds glowing plasma geometry directly from NASA Magnetogram data
     public func buildDataDrivenMagneticLoops(from lines: [MagneticLoopLine], pointsPerLoop: Int = 50) -> SCNGeometry {
+        print("buildDataDrivenMagneticLoops: Building \(lines.count) magnetic lines")
         var vertices: [simd_float3] = []
         var indices: [Int32] = []
         var texcoords: [simd_float2] = []
