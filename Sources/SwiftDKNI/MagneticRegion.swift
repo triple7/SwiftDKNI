@@ -42,7 +42,7 @@ public final class MagnetogramModeler: @unchecked Sendable {
         // For this example, we use a known Stanford JSOC endpoint format for HMI synoptic maps.
         // E.g., https://jsoc.stanford.edu/data/hmi/synoptic/hmi.Synoptic_Mr.2270.fits
         let rotationNumber = 2270 
-        let urlString = "https://jsoc.stanford.edu/data/hmi/synoptic/hmi.Synoptic_Mr.\(rotationNumber).fits"
+        let urlString = "http://jsoc.stanford.edu/data/hmi/synoptic/hmi.Synoptic_Mr.\(rotationNumber).fits"
         
         guard let url = URL(string: urlString) else {
             throw URLError(.badURL)
