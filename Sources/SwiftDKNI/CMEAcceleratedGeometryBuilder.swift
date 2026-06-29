@@ -6,10 +6,36 @@
 //
 
 
+import Foundation
 import SceneKit
 import CoreGraphics
 import Accelerate
 import simd
+
+// MARK: - 1. Bezier Math Extension
+// This extends the struct we defined in MagnetogramModeler.swift
+// allowing it to evaluate 3D points along the curve.
+
+extension MagneticLoopLine {
+    func position(at t: Float) -> simd_float3 {
+        let u = 1.0 - t
+        let tt = t * t
+        let uu = u * u
+        
+        let term1 = p0 * uu
+        let term2 = p1 * (2.0 * u * t)
+        let term3 = p2 * tt
+        
+        return term1 + term2 + term3
+    }
+    
+    func tangent(at t: Float) -> simd_float3 {
+        let u = 1.0 - t
+        let dP1 = (p1 - p0) * (2.0 * u)
+        let dP2 = (p2 - p1) * (2.0 * t)
+        return simd_normalize(dP1 + dP2)
+    }
+}
 
 /// Handles the mathematical generation of Flux Ropes, Helical CME particles, and Magnetic Loops
 public final class CMEGeometryBuilder: Sendable {
@@ -184,7 +210,7 @@ public final class CMEGeometryBuilder: Sendable {
         return lines
     }
     
-    // MARK: - 4. Geometry Generators
+    // MARK: - 4. Geometry Generators (Simulated / DONKI API)
     
     public func buildMagneticLoops(for event: AveragedCMEData, loopCount: Int = 40, pointsPerLoop: Int = 50, solarRadius: Float = 1.0) -> SCNGeometry {
         let lat = Float(event.latitude ?? 0.0)
@@ -359,6 +385,131 @@ public final class CMEGeometryBuilder: Sendable {
         return SCNGeometry(sources: [source, uvSource, colorSource], elements: [element])
     }
     
+    // MARK: - 5. Geometry Generators (Data-Driven / FITS API)
+    
+    /// Builds glowing plasma geometry directly from NASA Magnetogram data
+    public func buildDataDrivenMagneticLoops(from lines: [MagneticLoopLine], pointsPerLoop: Int = 50) -> SCNGeometry {
+        var vertices: [simd_float3] = []
+        var indices: [Int32] = []
+        var texcoords: [simd_float2] = []
+        var colors: [simd_float4] = []
+        
+        var currentIndex: Int32 = 0
+        
+        for line in lines {
+            // Random phase for the animation shader so they don't all pulse uniformly
+            let phase = Float.random(in: 0.0...1.0)
+            
+            for i in 0...pointsPerLoop {
+                let t = Float(i) / Float(pointsPerLoop)
+                vertices.append(line.position(at: t))
+                texcoords.append(simd_float2(t, phase))
+                
+                // 3-Stage Dissipation Colors
+                let coreColor = simd_float4(1.0, 1.0, 1.0, 0.9)
+                let midColor  = simd_float4(1.0, 0.7, 0.1, 0.6)
+                let redColor  = simd_float4(0.8, 0.1, 0.0, 0.3)
+                let tipColor  = simd_float4(0.05, 0.05, 0.05, 0.0)
+                
+                let color: simd_float4
+                if line.isOpen {
+                    // Open field line (Solar Wind / CME): 0.0 is root, 1.0 is deep space
+                    let outwardness = t
+                    if outwardness < 0.25 {
+                        color = mixColor(coreColor, midColor, factor: outwardness / 0.25)
+                    } else if outwardness < 0.6 {
+                        color = mixColor(midColor, redColor, factor: (outwardness - 0.25) / 0.35)
+                    } else {
+                        color = mixColor(redColor, tipColor, factor: (outwardness - 0.6) / 0.4)
+                    }
+                } else {
+                    // Closed loop (Arch): 0.0 and 1.0 are roots, 0.5 is apex
+                    let apexness = 1.0 - (abs(t - 0.5) * 2.0)
+                    
+                    // Highly charged regions (1000+ Gauss) get hotter, whiter roots
+                    let loopIntensity = min(1.0, abs(line.intensity) / 1000.0)
+                    let rootColor = mixColor(midColor, coreColor, factor: loopIntensity)
+                    
+                    color = mixColor(rootColor, redColor, factor: apexness)
+                }
+                colors.append(color)
+                
+                // Connect current point to previous point to form a line segment
+                if i > 0 {
+                    indices.append(currentIndex - 1)
+                    indices.append(currentIndex)
+                }
+                currentIndex += 1
+            }
+        }
+        
+        let vertexData = Data(bytes: vertices, count: vertices.count * MemoryLayout<simd_float3>.size)
+        let source = SCNGeometrySource(
+            data: vertexData, semantic: .vertex, vectorCount: vertices.count,
+            usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size,
+            dataOffset: 0, dataStride: MemoryLayout<simd_float3>.size
+        )
+        
+        let uvData = Data(bytes: texcoords, count: texcoords.count * MemoryLayout<simd_float2>.size)
+        let uvSource = SCNGeometrySource(
+            data: uvData, semantic: .texcoord, vectorCount: texcoords.count,
+            usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size,
+            dataOffset: 0, dataStride: MemoryLayout<simd_float2>.size
+        )
+        
+        let colorData = Data(bytes: colors, count: colors.count * MemoryLayout<simd_float4>.size)
+        let colorSource = SCNGeometrySource(
+            data: colorData, semantic: .color, vectorCount: colors.count,
+            usesFloatComponents: true, componentsPerVector: 4, bytesPerComponent: MemoryLayout<Float>.size,
+            dataOffset: 0, dataStride: MemoryLayout<simd_float4>.size
+        )
+        
+        let indexData = Data(bytes: indices, count: indices.count * MemoryLayout<Int32>.size)
+        let element = SCNGeometryElement(
+            data: indexData, primitiveType: .line, primitiveCount: indices.count / 2,
+            bytesPerIndex: MemoryLayout<Int32>.size
+        )
+        
+        return SCNGeometry(sources: [source, uvSource, colorSource], elements: [element])
+    }
+    
+    /// Wraps the geometry in an SCNNode, applies the additive materials and animation shaders
+    public func createCoronalSurface(from lines: [MagneticLoopLine]) -> SCNNode {
+        let geometry = buildDataDrivenMagneticLoops(from: lines)
+        
+        let material = SCNMaterial()
+        material.isDoubleSided = true
+        material.blendMode = .add  // Creates the intense volumetric glow where lines overlap
+        material.writesToDepthBuffer = false
+        material.readsFromDepthBuffer = true
+        material.diffuse.contents = createSoftGlowTexture()
+        
+        // Custom shader modifier for pulsing energy moving along the lines
+        material.shaderModifiers = [
+            .surface: """
+            #pragma arguments
+            float time;
+            
+            #pragma body
+            // Fetch the phase from texcoord y and progress from texcoord x
+            float phase = _surface.diffuseTexcoord.y;
+            float t = _surface.diffuseTexcoord.x;
+            
+            // Create a flowing pulse effect along the lines
+            float pulse = (sin((t * 10.0) - (scn_frame.time * 5.0) + (phase * 6.28)) * 0.5) + 0.5;
+            
+            // Boost emission significantly for the bloom/glow effect
+            _surface.emission.rgb = _surface.diffuse.rgb * (pulse + 0.5) * 1.5;
+            """
+        ]
+        
+        geometry.materials = [material]
+        
+        let node = SCNNode(geometry: geometry)
+        // Ensure this node renders into your specific SCNTechnique pass (e.g., CME_BUFFER)
+        node.categoryBitMask = 2
+        return node
+    }
 }
 
 // MARK: - Helper Math Functions
