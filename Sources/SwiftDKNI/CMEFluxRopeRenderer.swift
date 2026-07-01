@@ -54,7 +54,7 @@ final public class CMEFluxRopeRenderer: Sendable {
         let thickness: Float = 0.3
         material.setValue(thickness, forKey: "u_thickness")
         
-        let initialTime: Float = 0.0
+        let initialTime: Float = 5.0 // set to 0.0 when animating
         material.setValue(initialTime, forKey: "u_globalTime")
         
         let ignitionTime: Float = 0.0
