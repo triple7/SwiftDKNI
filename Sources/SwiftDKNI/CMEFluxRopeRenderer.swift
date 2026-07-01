@@ -71,7 +71,7 @@ final public class CMEFluxRopeRenderer: Sendable {
         // Add the distortion bitmask to pick up the SCNTechnique
         
         let node = SCNNode(geometry: geometry)
-        node.categoryBitMask = 1 << 2
+        node.categoryBitMask = 2
         return node
     }
 }
