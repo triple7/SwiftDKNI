@@ -41,7 +41,7 @@ public final class MagnetogramModeler: @unchecked Sendable {
         // In reality, you would query the JSOC DRMS API to get the current Carrington Rotation number.
         // For this example, we use a known Stanford JSOC endpoint format for HMI synoptic maps.
         // E.g., https://jsoc.stanford.edu/data/hmi/synoptic/hmi.Synoptic_Mr.2270.fits
-        let rotationNumber = 2270 
+        let rotationNumber = 2270
         let urlString = "http://jsoc.stanford.edu/data/hmi/synoptic/hmi.Synoptic_Mr.\(rotationNumber).fits"
         
         guard let url = URL(string: urlString) else {
@@ -147,7 +147,7 @@ public final class MagnetogramModeler: @unchecked Sendable {
         return MagnetogramData(cgImage: cgImage, width: width, height: height, fluxArray: dataArray)
     }
 
-    // MARK: - 4. Modeling & Spline Extraction
+    // MARK: - 4. PFSS Modeling & Magnetic Integration
     
     /// Scans the flux array to find clusters of extreme magnetic activity
     private func extractActiveRegions(from data: MagnetogramData, thresholdGauss: Float = 500.0) -> (positive: [MagneticRegion], negative: [MagneticRegion]) {
@@ -177,7 +177,7 @@ public final class MagnetogramModeler: @unchecked Sendable {
             }
         }
         
-        // In a production app, you would run a K-Means clustering algorithm here 
+        // In a production app, you would run a K-Means clustering algorithm here
         // to group neighboring pixels into single massive 'Sunspot' regions.
         return (posRegions, negRegions)
     }
@@ -193,56 +193,110 @@ public final class MagnetogramModeler: @unchecked Sendable {
         )
     }
     
-    /// The Holy Grail algorithm: Pairs positive and negative regions to form loops, or spawns open field lines.
+    /// PFSS Approximation 1: Sums the magnetic pull of all regions at a specific point in 3D space
+    private func computeMagneticField(at point: simd_float3, regions: [(pos: simd_float3, flux: Float)]) -> simd_float3 {
+        var bField = simd_float3(0, 0, 0)
+        for region in regions {
+            let rVec = point - region.pos
+            let rSq = simd_length_squared(rVec)
+            // Add a tiny epsilon to prevent division by zero near the monopoles
+            let r3 = rSq * sqrt(rSq) + 0.0001
+            bField += (rVec * region.flux) / r3
+        }
+        return bField
+    }
+    
+    /// PFSS Approximation 2: Uses an Euler Integrator to trace the physical path of a magnetic field line
+    private func traceFieldLine(startPoint p0: simd_float3, regions: [(pos: simd_float3, flux: Float)], intensity: Float) -> MagneticLoopLine {
+        var currentPos = p0
+        var maxRadius: Float = 1.0
+        var p1 = p0 // Apex tracking
+        
+        let stepSize: Float = 0.04
+        let maxSteps = 150
+        
+        // Push the starting point slightly off the surface to begin the trace
+        currentPos += simd_normalize(p0) * 0.05
+        
+        var isOpen = true
+        var p2 = p0
+        
+        for _ in 0..<maxSteps {
+            let bField = computeMagneticField(at: currentPos, regions: regions)
+            let direction = simd_normalize(bField)
+            
+            // Move along the magnetic vector
+            currentPos += direction * stepSize
+            let currentRadius = simd_length(currentPos)
+            
+            // Track the highest point of the arch (Apex)
+            if currentRadius > maxRadius {
+                maxRadius = currentRadius
+                p1 = currentPos
+            }
+            
+            // Did the line curve back and hit the sun? (Closed Loop)
+            if currentRadius <= 1.0 {
+                isOpen = false
+                p2 = simd_normalize(currentPos)
+                break
+            }
+            
+            // Did the line escape the solar system? (Open Field / CME)
+            if currentRadius > 3.0 {
+                isOpen = true
+                p2 = currentPos
+                break
+            }
+        }
+        
+        // Fallback cleanup if the trace ran out of steps before resolving
+        if isOpen && simd_length(currentPos) <= 3.0 {
+            p2 = currentPos
+            p1 = p0 + (simd_normalize(p0) * 1.5)
+        }
+        
+        return MagneticLoopLine(p0: p0, p1: p1, p2: p2, isOpen: isOpen, intensity: intensity)
+    }
+    
+    /// The Holy Grail PFSS algorithm: Seeds thousands of particles and traces their magnetic paths.
     public func calculateMagneticLoops(from data: MagnetogramData, connectionThresholdDegrees: Float = 25.0) -> [MagneticLoopLine] {
         let (posRegions, negRegions) = extractActiveRegions(from: data)
         var loops: [MagneticLoopLine] = []
         
-        // We need mutable copies to track which negative regions have already been paired up
-        var availableNegatives = negRegions
+        // Pre-compute 3D coordinates and fluxes for the physics engine
+        var allRegions3D: [(pos: simd_float3, flux: Float)] = []
+        for r in posRegions + negRegions {
+            allRegions3D.append((sphericalToCartesian(lat: r.centroidLat, lon: r.centroidLon), r.fluxIntensity))
+        }
+        
+        // Spawn 12 individual field lines per positive region to create volumetric bundles
+        let linesPerRegion = 12
+        let bundleSpreadRadius: Float = 0.06
         
         for pos in posRegions {
-            let p0 = sphericalToCartesian(lat: pos.centroidLat, lon: pos.centroidLon)
+            let centerPos = sphericalToCartesian(lat: pos.centroidLat, lon: pos.centroidLon)
             
-            // Find the closest negative region
-            var closestDistance: Float = .greatestFiniteMagnitude
-            var closestIndex: Int? = nil
-            var closestNeg: MagneticRegion? = nil
+            // Calculate a local coordinate system to spread the seed points in a circle
+            let up = simd_float3(0, 1, 0)
+            var right = simd_cross(centerPos, up)
+            if simd_length(right) < 0.001 { right = simd_float3(1, 0, 0) }
+            right = simd_normalize(right)
+            let localUp = simd_normalize(simd_cross(right, centerPos))
             
-            for (index, neg) in availableNegatives.enumerated() {
-                // Quick equirectangular distance check (Pythagorean)
-                let dLat = pos.centroidLat - neg.centroidLat
-                let dLon = pos.centroidLon - neg.centroidLon
-                let distance = sqrt(dLat*dLat + dLon*dLon)
+            for i in 0..<linesPerRegion {
+                // Space seeds evenly in a circle around the active region
+                let angle = (Float(i) / Float(linesPerRegion)) * 2.0 * .pi
+                let offset = (right * cos(angle) + localUp * sin(angle)) * bundleSpreadRadius
+                let p0 = simd_normalize(centerPos + offset)
                 
-                if distance < closestDistance {
-                    closestDistance = distance
-                    closestIndex = index
-                    closestNeg = neg
+                // Trace the line through the physics engine!
+                let loop = traceFieldLine(startPoint: p0, regions: allRegions3D, intensity: pos.fluxIntensity)
+                
+                // Filter out tiny micro-loops that just instantly clip back into the surface
+                if simd_length(loop.p1) > 1.05 {
+                    loops.append(loop)
                 }
-            }
-            
-            if let closestNeg = closestNeg, let index = closestIndex, closestDistance <= connectionThresholdDegrees {
-                // MATCH FOUND: Create a CLOSED LOOP between the regions
-                availableNegatives.remove(at: index) // Consume the negative pole
-                
-                let p2 = sphericalToCartesian(lat: closestNeg.centroidLat, lon: closestNeg.centroidLon)
-                
-                // Apex calculation: Find midpoint, push it outward based on the distance between the roots
-                let midPoint = simd_normalize(p0 + p2) 
-                let apexHeight = 1.0 + (closestDistance / 50.0) // Wider roots = taller loop
-                let p1 = midPoint * apexHeight
-                
-                loops.append(MagneticLoopLine(p0: p0, p1: p1, p2: p2, isOpen: false, intensity: pos.fluxIntensity))
-                
-            } else {
-                // NO MATCH NEARBY: Create an OPEN FIELD LINE (CME / Solar Wind)
-                // This means the magnetic pressure is too high and snaps outward into space
-                
-                let outwardVector = simd_normalize(p0)
-                let p1 = p0 + (outwardVector * 3.0) // Shoot it out 3 solar radii
-                
-                loops.append(MagneticLoopLine(p0: p0, p1: p1, p2: p0, isOpen: true, intensity: pos.fluxIntensity))
             }
         }
         
