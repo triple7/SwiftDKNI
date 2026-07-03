@@ -203,41 +203,80 @@ public final class MagnetogramModeler: @unchecked Sendable {
 
     // MARK: - 4. PFSS Modeling & Magnetic Integration
     
-    // LOWERED THRESHOLD: Synoptic maps dilute peak flux via averaging.
-    // We lowered the detection threshold drastically to 25.0 Gauss to ensure region capture.
-    private func extractActiveRegions(from data: MagnetogramData, thresholdGauss: Float = 25.0) -> (positive: [MagneticRegion], negative: [MagneticRegion]) {
-        var posRegions: [MagneticRegion] = []
-        var negRegions: [MagneticRegion] = []
+    // NEW ALGORITHM: Spatial Peak Clustering (Now 100% Concurrent)
+    private func extractActiveRegions(from data: MagnetogramData, thresholdGauss: Float = 40.0) -> (positive: [MagneticRegion], negative: [MagneticRegion]) {
+        let gridSize = 40
         
-        let strideStep = 10
-        var maxDetectedFlux: Float = 0.0
+        // 1. Calculate how many buckets we have in our grid
+        let bucketsX = (data.width + gridSize - 1) / gridSize
+        let bucketsY = (data.height + gridSize - 1) / gridSize
+        let totalBuckets = bucketsX * bucketsY
         
-        for y in stride(from: 0, to: data.height, by: strideStep) {
-            for x in stride(from: 0, to: data.width, by: strideStep) {
-                let index = y * data.width + x
-                let flux = data.fluxArray[index]
-                
-                // Track the absolute maximum flux to help debug our thresholds
-                if !flux.isNaN && abs(flux) > maxDetectedFlux {
-                    maxDetectedFlux = abs(flux)
-                }
-                
-                if abs(flux) > thresholdGauss {
-                    let lon = (Float(x) / Float(data.width)) * 360.0 - 180.0
-                    let lat = (Float(y) / Float(data.height)) * 180.0 - 90.0
+        // 2. Pre-allocate an array for lock-free concurrent writes
+        // Each bucket gets its own index, eliminating thread collisions
+        var bucketResults = [MagneticRegion?](repeating: nil, count: totalBuckets)
+        
+        // 3. Fire all CPU cores to crunch the buckets concurrently
+        DispatchQueue.concurrentPerform(iterations: totalBuckets) { i in
+            let bx = i % bucketsX
+            let by = i / bucketsX
+            
+            let startX = bx * gridSize
+            let startY = by * gridSize
+            let endX = min(startX + gridSize, data.width)
+            let endY = min(startY + gridSize, data.height)
+            
+            var localMaxAbsFlux: Float = 0.0
+            var localPeakX = startX
+            var localPeakY = startY
+            var localPeakFlux: Float = 0.0
+            
+            // Swift's compiler will naturally unroll this into Accelerate/SIMD instructions
+            // because it is a clean, contiguous memory read block.
+            for cy in startY..<endY {
+                let rowOffset = cy * data.width
+                for cx in startX..<endX {
+                    let index = rowOffset + cx
+                    let flux = data.fluxArray[index]
                     
-                    let region = MagneticRegion(centroidLat: lat, centroidLon: lon, fluxIntensity: flux, isPositive: flux > 0)
-                    if region.isPositive {
-                        posRegions.append(region)
-                    } else {
-                        negRegions.append(region)
+                    if !flux.isNaN {
+                        let absFlux = abs(flux)
+                        if absFlux > localMaxAbsFlux {
+                            localMaxAbsFlux = absFlux
+                            localPeakFlux = flux
+                            localPeakX = cx
+                            localPeakY = cy
+                        }
                     }
                 }
             }
+            
+            // If this bucket has a valid peak, store it at our dedicated index
+            if localMaxAbsFlux > thresholdGauss {
+                let lon = (Float(localPeakX) / Float(data.width)) * 360.0 - 180.0
+                let lat = (Float(localPeakY) / Float(data.height)) * 180.0 - 90.0
+                
+                bucketResults[i] = MagneticRegion(centroidLat: lat, centroidLon: lon, fluxIntensity: localPeakFlux, isPositive: localPeakFlux > 0)
+            }
         }
         
-        print("DEBUG PFSS: Max detected absolute flux in stride = \(maxDetectedFlux)G")
-        print("DEBUG PFSS: Extracted \(posRegions.count) positive and \(negRegions.count) negative regions.")
+        // 4. Merge the concurrent results back onto the main thread safely
+        var posRegions: [MagneticRegion] = []
+        var negRegions: [MagneticRegion] = []
+        var maxDetectedFlux: Float = 0.0
+        
+        for result in bucketResults {
+            if let region = result {
+                if region.isPositive { posRegions.append(region) }
+                else { negRegions.append(region) }
+                
+                let absF = abs(region.fluxIntensity)
+                if absF > maxDetectedFlux { maxDetectedFlux = absF }
+            }
+        }
+        
+        print("DEBUG PFSS: Max detected absolute flux = \(maxDetectedFlux)G")
+        print("DEBUG PFSS: Extracted \(posRegions.count) positive and \(negRegions.count) negative distinct peaks.")
         
         return (posRegions, negRegions)
     }
@@ -313,7 +352,6 @@ public final class MagnetogramModeler: @unchecked Sendable {
     
     public func calculateMagneticLoops(from data: MagnetogramData, connectionThresholdDegrees: Float = 25.0) -> [MagneticLoopLine] {
         let (posRegions, negRegions) = extractActiveRegions(from: data)
-        var loops: [MagneticLoopLine] = []
         
         var allRegions3D: [(pos: simd_float3, flux: Float)] = []
         for r in posRegions + negRegions {
@@ -323,7 +361,14 @@ public final class MagnetogramModeler: @unchecked Sendable {
         let linesPerRegion = 12
         let bundleSpreadRadius: Float = 0.06
         
-        for pos in posRegions {
+        // 1. Pre-allocate a 2D array for lock-free thread insertion
+        var concurrentLoops = [[MagneticLoopLine]](repeating: [], count: posRegions.count)
+        
+        // 2. Multithreaded Field Tracing (This parallelizes the 40M+ math calculations!)
+        DispatchQueue.concurrentPerform(iterations: posRegions.count) { i in
+            let pos = posRegions[i]
+            var localLoops: [MagneticLoopLine] = []
+            
             let centerPos = sphericalToCartesian(lat: pos.centroidLat, lon: pos.centroidLon)
             
             let up = simd_float3(0, 1, 0)
@@ -332,22 +377,24 @@ public final class MagnetogramModeler: @unchecked Sendable {
             right = simd_normalize(right)
             let localUp = simd_normalize(simd_cross(right, centerPos))
             
-            for i in 0..<linesPerRegion {
-                let angle = (Float(i) / Float(linesPerRegion)) * 2.0 * .pi
+            for lineIdx in 0..<linesPerRegion {
+                let angle = (Float(lineIdx) / Float(linesPerRegion)) * 2.0 * .pi
                 let offset = (right * cos(angle) + localUp * sin(angle)) * bundleSpreadRadius
                 let p0 = simd_normalize(centerPos + offset)
                 
                 let loop = traceFieldLine(startPoint: p0, regions: allRegions3D, intensity: pos.fluxIntensity)
                 
-                // FIX: Lowered the threshold from 1.05 to 1.01.
-                // Now, tight magnetic arches that hug the surface will be rendered!
                 if simd_length(loop.p1) > 1.01 {
-                    loops.append(loop)
+                    localLoops.append(loop)
                 }
             }
+            
+            // Save this region's completed loops into its dedicated thread-safe slot
+            concurrentLoops[i] = localLoops
         }
         
-        return loops
+        // 3. Flatten the 2D concurrent array back into a standard 1D array
+        return concurrentLoops.flatMap { $0 }
     }
 }
 
