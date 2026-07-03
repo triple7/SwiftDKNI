@@ -216,12 +216,9 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
     
     // MARK: - Dynamic GPU-Evaluated Energy Tunnels
     private func buildEnergyTunnels(from lines: [MagneticLoopLine], particlesPerLine: Int = 20, solarRadius: Float) -> SCNNode {
-        var vertexDataArray: [Float] = [] // p1 (Apex)
-        var uv0DataArray: [Float] = []    // p0.lat, p0.lon
-        var uv1DataArray: [Float] = []    // p2.lat, p2.lon
-        var uv2DataArray: [Float] = []    // speed, phase
-        var uv3DataArray: [Float] = []    // offset, loopIntensity
-        var colorDataArray: [Float] = []  // Dummy required to force SceneKit allocation
+        var vertexDataArray: [Float] = [] // p1.x, p1.y, p1.z
+        var uvDataArray: [Float] = []     // packed_latlon0, packed_latlon2
+        var colorDataArray: [Float] = []  // speed, phase, offset, loopIntensity
         var indices: [Int32] = []
         
         var currentIndex: Int32 = 0
@@ -231,15 +228,23 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             
             let p1 = line.p1 * solarRadius
             
-            // 1. Calculate safe spherical coordinates for p0 (Root 1)
+            // 1. Calculate Safe Spherical Coordinates for Roots
             let p0_norm = simd_normalize(line.p0)
             let lat0 = asin(max(-1.0, min(1.0, p0_norm.y)))
             let lon0 = atan2(p0_norm.x, p0_norm.z)
             
-            // 2. Calculate safe spherical coordinates for p2 (Root 2)
             let p2_norm = simd_normalize(line.p2)
             let lat2 = asin(max(-1.0, min(1.0, p2_norm.y)))
             let lon2 = atan2(p2_norm.x, p2_norm.z)
+            
+            // 2. Spherical Packing: Squeeze Lat & Lon down into a single precise Float!
+            let lat0_n = max(0.0, min(0.9999, (lat0 + (.pi / 2.0)) / .pi))
+            let lon0_n = max(0.0, min(0.9999, (lon0 + .pi) / (2.0 * .pi)))
+            let packed0 = Float(Int(lat0_n * 4000.0)) + lon0_n
+            
+            let lat2_n = max(0.0, min(0.9999, (lat2 + (.pi / 2.0)) / .pi))
+            let lon2_n = max(0.0, min(0.9999, (lon2 + .pi) / (2.0 * .pi)))
+            let packed2 = Float(Int(lat2_n * 4000.0)) + lon2_n
             
             let loopIntensity = min(1.0, abs(line.intensity) / 1000.0)
             
@@ -248,44 +253,32 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
                 let speed = Float.random(in: 0.05...0.25)
                 let phase = Float.random(in: 0.0...1.0)
                 
-                // Pack into completely immune, pure UV channels
+                // 3. Inject data into pure, default, crash-proof semantics
                 vertexDataArray.append(contentsOf: [p1.x, p1.y, p1.z])
-                uv0DataArray.append(contentsOf: [lat0, lon0])
-                uv1DataArray.append(contentsOf: [lat2, lon2])
-                uv2DataArray.append(contentsOf: [speed, phase])
-                uv3DataArray.append(contentsOf: [offset, loopIntensity])
-                colorDataArray.append(contentsOf: [1.0, 1.0, 1.0, 1.0])
+                uvDataArray.append(contentsOf: [packed0, packed2])
+                colorDataArray.append(contentsOf: [speed, phase, offset, loopIntensity])
                 
                 indices.append(currentIndex)
                 currentIndex += 1
             }
         }
         
-        // Build Data Blocks
         let vertexData = Data(bytes: vertexDataArray, count: vertexDataArray.count * MemoryLayout<Float>.size)
-        let uv0Data = Data(bytes: uv0DataArray, count: uv0DataArray.count * MemoryLayout<Float>.size)
-        let uv1Data = Data(bytes: uv1DataArray, count: uv1DataArray.count * MemoryLayout<Float>.size)
-        let uv2Data = Data(bytes: uv2DataArray, count: uv2DataArray.count * MemoryLayout<Float>.size)
-        let uv3Data = Data(bytes: uv3DataArray, count: uv3DataArray.count * MemoryLayout<Float>.size)
-        let colorData = Data(bytes: colorDataArray, count: colorDataArray.count * MemoryLayout<Float>.size)
-        
-        let indexData = Data(bytes: indices, count: indices.count * MemoryLayout<Int32>.size)
-        
-        // Build Geometry Sources
         let vertexSource = SCNGeometrySource(data: vertexData, semantic: .vertex, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
-        let uv0Source = SCNGeometrySource(data: uv0Data, semantic: .texcoord, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
-        let uv1Source = SCNGeometrySource(data: uv1Data, semantic: .texcoord, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
-        let uv2Source = SCNGeometrySource(data: uv2Data, semantic: .texcoord, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
-        let uv3Source = SCNGeometrySource(data: uv3Data, semantic: .texcoord, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
+
+        let uvData = Data(bytes: uvDataArray, count: uvDataArray.count * MemoryLayout<Float>.size)
+        let uvSource = SCNGeometrySource(data: uvData, semantic: .texcoord, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
+
+        let colorData = Data(bytes: colorDataArray, count: colorDataArray.count * MemoryLayout<Float>.size)
         let colorSource = SCNGeometrySource(data: colorData, semantic: .color, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 4, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 4)
 
+        let indexData = Data(bytes: indices, count: indices.count * MemoryLayout<Int32>.size)
         let element = SCNGeometryElement(data: indexData, primitiveType: .point, primitiveCount: indices.count, bytesPerIndex: MemoryLayout<Int32>.size)
         element.pointSize = 5.0
         element.minimumPointScreenSpaceRadius = 1.0
         element.maximumPointScreenSpaceRadius = 15.0
 
-        // SceneKit natively binds multiple .texcoord sources to texcoords[0], texcoords[1], etc.
-        let geometry = SCNGeometry(sources: [vertexSource, uv0Source, uv1Source, uv2Source, uv3Source, colorSource], elements: [element])
+        let geometry = SCNGeometry(sources: [vertexSource, uvSource, colorSource], elements: [element])
         
         let material = SCNMaterial()
         material.lightingModel = .constant
@@ -302,26 +295,29 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             float u_solarRadius;
 
             #pragma body
-            // 1. Unpack our purely safe UV channels
+            // 1. Unpack completely safe, standard data BEFORE lighting overrides it
             float3 p1 = _geometry.position.xyz; 
+            float packed0 = _geometry.texcoords[0].x;
+            float packed2 = _geometry.texcoords[0].y;
             
-            float2 uv0 = _geometry.texcoords[0]; 
-            float2 uv1 = _geometry.texcoords[1]; 
-            float2 uv2 = _geometry.texcoords[2]; 
-            float2 uv3 = _geometry.texcoords[3]; 
+            float speed = _geometry.color.r;
+            float phase = _geometry.color.g;
+            float offset = _geometry.color.b;
+            float loopIntensity = _geometry.color.a;
             
-            float lat0 = uv0.x; float lon0 = uv0.y;
-            float lat2 = uv1.x; float lon2 = uv1.y;
-            float speed = uv2.x; float phase = uv2.y;
-            float offset = uv3.x; float loopIntensity = uv3.y;
+            // 2. Decode Lat/Lon Spherical Coordinates back into perfectly smooth Float vectors
+            float lat0_n = floor(packed0) / 4000.0f;
+            float lon0_n = fract(packed0);
+            float lat0 = (lat0_n * 3.14159f) - (3.14159f / 2.0f);
+            float lon0 = (lon0_n * 6.28318f) - 3.14159f;
+            
+            float lat2_n = floor(packed2) / 4000.0f;
+            float lon2_n = fract(packed2);
+            float lat2 = (lat2_n * 3.14159f) - (3.14159f / 2.0f);
+            float lon2 = (lon2_n * 6.28318f) - 3.14159f;
             
             float3 p0 = float3(cos(lat0)*sin(lon0), sin(lat0), cos(lat0)*cos(lon0)) * u_solarRadius;
             float3 p2 = float3(cos(lat2)*sin(lon2), sin(lat2), cos(lat2)*cos(lon2)) * u_solarRadius;
-            
-            // 2. Base Colors
-            float4 coreColor = float4(1.0f, 0.9f, 0.5f, 1.0f);
-            float4 midColor  = float4(1.0f, 0.4f, 0.0f, 1.0f);
-            float4 baseColor = mix(midColor, coreColor, loopIntensity);
             
             // 3. Physics: Flow from Positive to Negative
             float t = fract(offset + (scn_frame.time * speed));
@@ -349,20 +345,29 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             // 6. Output Final GPU Position
             _geometry.position.xyz = basePos + tunnelOffset;
             
-            // 7. Calculate Alpha and Twinkle directly in Vertex Shader for massive performance boost
-            float alpha = sin(t * 3.14159f);
-            float twinkle = (sin(scn_frame.time * 15.0f + phase * 6.28f) * 0.5f) + 0.5f;
-            float finalAlpha = pow(alpha, 1.5f) * (0.4f + 0.6f * twinkle);
-            
-            // 8. Apply straight to geometry color!
-            _geometry.color = float4(baseColor.rgb, finalAlpha);
+            // Store variables we need in the fragment shader into an unused channel
+            _geometry.texcoords[0] = float2(t, loopIntensity);
             """,
             
             .fragment: """
             #pragma transparent
             #pragma body
-            // SceneKit takes our beautifully computed _geometry.color and handles the rest!
-            _surface.emission.rgb = _surface.diffuse.rgb * 4.0f;
+            // Read the stored physics values
+            float t = _surface.ambientTexcoord.x;
+            float loopIntensity = _surface.ambientTexcoord.y;
+
+            // Recalculate visual color so we don't need to overwrite _geometry.color
+            float3 coreColor = float3(1.0f, 0.9f, 0.5f);
+            float3 midColor  = float3(1.0f, 0.4f, 0.0f);
+            float3 baseColor = mix(midColor, coreColor, loopIntensity);
+
+            float alpha = sin(t * 3.14159f);
+            float twinkle = (sin(scn_frame.time * 15.0f + t * 6.28318f) * 0.5f) + 0.5f;
+            float finalAlpha = pow(alpha, 1.5f) * (0.4f + 0.6f * twinkle);
+            
+            // Apply straight to surface emission and transparency
+            _surface.emission.rgb = baseColor * 4.0f;
+            _surface.transparent.a = _surface.diffuse.a * finalAlpha;
             """
         ]
         
