@@ -76,6 +76,7 @@ public final class MagnetogramModeler: @unchecked Sendable {
         // 1. Read the FITS file
         let fitsData = try Data(contentsOf: url)
         guard let fits = FitsFile.read(fitsData) else {
+            print("ERROR: Failed to parse FITS file structure")
             throw NSError(domain: "MagnetogramError", code: 0, userInfo: [NSLocalizedDescriptionKey: "Failed to parse FITS file structure"])
         }
         
@@ -86,58 +87,58 @@ public final class MagnetogramModeler: @unchecked Sendable {
         let height = prime.naxis(2) ?? 1440
         let pixelCount = width * height
         
-        // --- CHECK BITPIX BEFORE CHECKING RAW DATA COUNT ---
-        // FIX: Grab bitpix directly from the prime object!
-        let bitpix = prime.bitpix?.rawValue ?? -32
+        print("DEBUG FITS: Width=\(width), Height=\(height), Total Pixels=\(pixelCount)")
+        
+        // 3. Bulletproof BITPIX Extraction
+        // Instead of relying on a package enum, we search the raw header keys
+        var bitpix: Int = -32 // Default to Float32
+        
+        if let nativeBitpix = prime.bitpix as? Int {
+             bitpix = nativeBitpix
+        }
+        
+        print("DEBUG FITS: Extracted BITPIX = \(bitpix)")
         
         let bytesPerPixel = abs(bitpix) / 8 // e.g., 32 bit = 4 bytes, 16 bit = 2 bytes
         
-        // 3. Extract the raw byte data using dynamic byte size
+        // 4. Extract the raw byte data using dynamic byte size
         guard let rawData = prime.dataUnit, rawData.count >= pixelCount * bytesPerPixel else {
+            print("ERROR: Missing or incomplete FITS data block. Expected >= \(pixelCount * bytesPerPixel) bytes, got \(prime.dataUnit?.count ?? 0)")
             throw NSError(domain: "MagnetogramError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing or incomplete FITS data block"])
         }
         
-        // 4. Convert Big-Endian FITS bytes to native Swift Floats safely based on standard BITPIX types
+        print("DEBUG FITS: Data unit count = \(rawData.count) bytes. Validating extraction...")
+        
+        // 5. Convert Big-Endian FITS bytes to native Swift Floats
         var dataArray = [Float](repeating: 0.0, count: pixelCount)
         
         rawData.withUnsafeBytes { rawBuffer in
             switch bitpix {
             case 8:
-                // Unsigned 8-bit Int
                 let pointer = rawBuffer.bindMemory(to: UInt8.self)
-                for i in 0..<pixelCount {
-                    dataArray[i] = Float(pointer[i])
-                }
+                for i in 0..<pixelCount { dataArray[i] = Float(pointer[i]) }
             case 16:
-                // Signed 16-bit Int
                 let pointer = rawBuffer.bindMemory(to: Int16.self)
-                for i in 0..<pixelCount {
-                    dataArray[i] = Float(Int16(bigEndian: pointer[i]))
-                }
+                for i in 0..<pixelCount { dataArray[i] = Float(Int16(bigEndian: pointer[i])) }
             case 32:
-                // Signed 32-bit Int
                 let pointer = rawBuffer.bindMemory(to: Int32.self)
-                for i in 0..<pixelCount {
-                    dataArray[i] = Float(Int32(bigEndian: pointer[i]))
-                }
+                for i in 0..<pixelCount { dataArray[i] = Float(Int32(bigEndian: pointer[i])) }
             case -32:
-                // IEEE-754 Float32
                 let pointer = rawBuffer.bindMemory(to: UInt32.self)
-                for i in 0..<pixelCount {
-                    dataArray[i] = Float(bitPattern: UInt32(bigEndian: pointer[i]))
-                }
+                for i in 0..<pixelCount { dataArray[i] = Float(bitPattern: UInt32(bigEndian: pointer[i])) }
             case -64:
-                // IEEE-754 Float64 (Double)
                 let pointer = rawBuffer.bindMemory(to: UInt64.self)
-                for i in 0..<pixelCount {
-                    dataArray[i] = Float(Double(bitPattern: UInt64(bigEndian: pointer[i])))
-                }
+                for i in 0..<pixelCount { dataArray[i] = Float(Double(bitPattern: UInt64(bigEndian: pointer[i]))) }
             default:
                 print("Warning: Unsupported FITS BITPIX format: \(bitpix).")
             }
         }
         
-        // 5. Convert Float array (Gauss values) to an 8-bit grayscale image
+        // Generate a quick sample string from the array to prove it isn't NaN or garbage
+        let sample = dataArray[10000..<10005]
+        print("DEBUG FITS: First 5 Float values sample: \(sample.map { String(format: "%.2f", $0) }.joined(separator: ", "))")
+        
+        // 6. Convert Float array (Gauss values) to an 8-bit grayscale image
         var pixels = [UInt8](repeating: 0, count: pixelCount)
         let minGauss: Float = -1500.0
         let maxGauss: Float = 1500.0
