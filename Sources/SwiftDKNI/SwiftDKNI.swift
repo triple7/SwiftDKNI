@@ -57,7 +57,15 @@ extension SwiftDKNI {
         
         // 1. Fetch the averaged data using the securely injected API key
         let request = CMERequest(startDate: startTime, endDate: endTime, apiKey: self.apiKey)
-        let events = try await donkiService.fetchAndAverageCMEData(request: request)
+        
+        // FIX: Trap the error. If DONKI fails (like a 503), default to an empty array
+        // instead of throwing and aborting the entire render.
+        var events: [AveragedCMEData] = []
+        do {
+            events = try await donkiService.fetchAndAverageCMEData(request: request)
+        } catch {
+            print("Warning: CME Generation Failed (\(error)). Proceeding with base sun & magnetic loops only.")
+        }
         
         // 2. Create the parent container
         let coronalSurfaceNode = SCNNode()
