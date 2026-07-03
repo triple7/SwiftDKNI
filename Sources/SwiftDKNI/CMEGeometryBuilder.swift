@@ -216,12 +216,12 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
     }
     
     // MARK: - Dynamic GPU-Evaluated Energy Tunnels
-    // MARK: - Dynamic GPU-Evaluated Energy Tunnels
     private func buildEnergyTunnels(from lines: [MagneticLoopLine], particlesPerLine: Int = 20, solarRadius: Float) -> SCNNode {
         var vertexDataArray: [Float] = [] // p1 (Apex)
         var normalDataArray: [Float] = [] // speed, phase, offset
-        var uvDataArray: [Float] = []     // p0.x, p0.y
-        var tangentDataArray: [Float] = [] // p0.z, p2.x, p2.y, p2.z
+        var uv0DataArray: [Float] = []    // p0.x, p0.y
+        var uv1DataArray: [Float] = []    // p0.z, p2.x
+        var uv2DataArray: [Float] = []    // p2.y, p2.z
         var colorDataArray: [Float] = []  // Base Color
         var indices: [Int32] = []
         
@@ -244,11 +244,12 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
                 let speed = Float.random(in: 0.05...0.25)
                 let phase = Float.random(in: 0.0...1.0)
                 
-                // Pack into perfectly legal standard semantics
+                // Pack into safe components
                 vertexDataArray.append(contentsOf: [p1.x, p1.y, p1.z])
                 normalDataArray.append(contentsOf: [speed, phase, offset])
-                uvDataArray.append(contentsOf: [p0.x, p0.y])
-                tangentDataArray.append(contentsOf: [p0.z, p2.x, p2.y, p2.z])
+                uv0DataArray.append(contentsOf: [p0.x, p0.y])
+                uv1DataArray.append(contentsOf: [p0.z, p2.x])
+                uv2DataArray.append(contentsOf: [p2.y, p2.z])
                 colorDataArray.append(contentsOf: [baseColor.x, baseColor.y, baseColor.z, baseColor.w])
                 
                 indices.append(currentIndex)
@@ -262,11 +263,9 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         let normalData = Data(bytes: normalDataArray, count: normalDataArray.count * MemoryLayout<Float>.size)
         let normalSource = SCNGeometrySource(data: normalData, semantic: .normal, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
 
-        let uvData = Data(bytes: uvDataArray, count: uvDataArray.count * MemoryLayout<Float>.size)
-        let uvSource = SCNGeometrySource(data: uvData, semantic: .texcoord, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
-
-        let tangentData = Data(bytes: tangentDataArray, count: tangentDataArray.count * MemoryLayout<Float>.size)
-        let tangentSource = SCNGeometrySource(data: tangentData, semantic: .tangent, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 4, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 4)
+        let uv0Source = SCNGeometrySource(data: Data(bytes: uv0DataArray, count: uv0DataArray.count * MemoryLayout<Float>.size), semantic: .texcoord, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
+        let uv1Source = SCNGeometrySource(data: Data(bytes: uv1DataArray, count: uv1DataArray.count * MemoryLayout<Float>.size), semantic: .texcoord, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
+        let uv2Source = SCNGeometrySource(data: Data(bytes: uv2DataArray, count: uv2DataArray.count * MemoryLayout<Float>.size), semantic: .texcoord, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
 
         let colorData = Data(bytes: colorDataArray, count: colorDataArray.count * MemoryLayout<Float>.size)
         let colorSource = SCNGeometrySource(data: colorData, semantic: .color, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 4, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 4)
@@ -276,7 +275,7 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         element.minimumPointScreenSpaceRadius = 1.0
         element.maximumPointScreenSpaceRadius = 15.0
 
-        let geometry = SCNGeometry(sources: [vertexSource, normalSource, uvSource, tangentSource, colorSource], elements: [element])
+        let geometry = SCNGeometry(sources: [vertexSource, normalSource, uv0Source, uv1Source, uv2Source, colorSource], elements: [element])
         
         let material = SCNMaterial()
         material.lightingModel = .constant
@@ -296,10 +295,11 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             float offset = _geometry.normal.z; 
             
             float2 uv = _geometry.texcoords[0];
-            float4 tan = _geometry.tangent;
+            // FIX: Renamed 'tan' to 'tng' to avoid crashing the Metal Math library!
+            float4 tng = _geometry.tangent;
             
-            float3 p0 = float3(uv.x, uv.y, tan.x);
-            float3 p2 = float3(tan.y, tan.z, tan.w);
+            float3 p0 = float3(uv.x, uv.y, tng.x);
+            float3 p2 = float3(tng.y, tng.z, tng.w);
             
             // 2. Physics: Flow from Positive to Negative
             float t = fract(offset + (scn_frame.time * speed));
@@ -351,6 +351,7 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         node.categoryBitMask = 2
         return node
     }
+    
     // MARK: - SceneKit Master Node
     public func createCoronalSurface(from lines: [MagneticLoopLine], solarRadius: Float) -> SCNNode {
         let masterNode = SCNNode()
