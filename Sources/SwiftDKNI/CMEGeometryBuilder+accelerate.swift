@@ -43,58 +43,57 @@ extension CMEGeometryBuilder {
         
         var vertexDataArray = [Float](repeating: 0.0, count: totalParticles * 3)
         var normalDataArray = [Float](repeating: 0.0, count: totalParticles * 3)
-        var uvDataArray     = [Float](repeating: 0.0, count: totalParticles * 2)
         var colorDataArray  = [Float](repeating: 0.0, count: totalParticles * 4)
+        
+        // Multi-UV Channels
+        var uv0DataArray    = [Float](repeating: 0.0, count: totalParticles * 2)
+        var uv1DataArray    = [Float](repeating: 0.0, count: totalParticles * 2)
+        
         var indices         = [Int32](repeating: 0, count: totalParticles)
         
         let pi = Float.pi
         let twoPi = Float.pi * 2.0
         var pIdx = 0
         
-        vertexDataArray.withUnsafeMutableBufferPointer { vPtr in
-        normalDataArray.withUnsafeMutableBufferPointer { nPtr in
-        uvDataArray.withUnsafeMutableBufferPointer { uPtr in
-        colorDataArray.withUnsafeMutableBufferPointer { cPtr in
-        indices.withUnsafeMutableBufferPointer { iPtr in
+        for line in validLines {
+            let p1 = line.p1 * solarRadius
+            let p0Norm = simd_normalize(line.p0)
+            let p2Norm = simd_normalize(line.p2)
             
-            for line in validLines {
-                let p1 = line.p1 * solarRadius
-                let p0Norm = simd_normalize(line.p0)
-                let p2Norm = simd_normalize(line.p2)
+            let lat2 = asin(max(-1.0, min(1.0, p2Norm.y)))
+            let lon2 = atan2(p2Norm.x, p2Norm.z)
+            
+            let lat2Norm = (lat2 + (pi / 2.0)) / pi
+            let lon2Norm = (lon2 + pi) / twoPi
+            let loopIntensity = min(1.0, abs(line.intensity) / 1000.0)
+            
+            for _ in 0..<particlesPerLine {
+                let vOffset = pIdx * 3
+                vertexDataArray[vOffset] = p1.x
+                vertexDataArray[vOffset + 1] = p1.y
+                vertexDataArray[vOffset + 2] = p1.z
                 
-                let lat2 = asin(max(-1.0, min(1.0, p2Norm.y)))
-                let lon2 = atan2(p2Norm.x, p2Norm.z)
+                normalDataArray[vOffset] = p0Norm.x
+                normalDataArray[vOffset + 1] = p0Norm.y
+                normalDataArray[vOffset + 2] = p0Norm.z
                 
-                let lat2Norm = (lat2 + (pi / 2.0)) / pi
-                let lon2Norm = (lon2 + pi) / twoPi
-                let loopIntensity = min(1.0, abs(line.intensity) / 1000.0)
+                let cOffset = pIdx * 4
+                colorDataArray[cOffset] = phases[pIdx]
+                colorDataArray[cOffset + 1] = loopIntensity
+                colorDataArray[cOffset + 2] = 1.0 // Unused but initialized safely
+                colorDataArray[cOffset + 3] = 1.0
                 
-                for _ in 0..<particlesPerLine {
-                    let vOffset = pIdx * 3
-                    vPtr[vOffset] = p1.x
-                    vPtr[vOffset + 1] = p1.y
-                    vPtr[vOffset + 2] = p1.z
-                    
-                    let nOffset = pIdx * 3
-                    nPtr[nOffset] = p0Norm.x
-                    nPtr[nOffset + 1] = p0Norm.y
-                    nPtr[nOffset + 2] = p0Norm.z
-                    
-                    let uOffset = pIdx * 2
-                    uPtr[uOffset] = speeds[pIdx]
-                    uPtr[uOffset + 1] = offsets[pIdx]
-                    
-                    let cOffset = pIdx * 4
-                    cPtr[cOffset] = lat2Norm
-                    cPtr[cOffset + 1] = lon2Norm
-                    cPtr[cOffset + 2] = phases[pIdx]
-                    cPtr[cOffset + 3] = loopIntensity
-                    
-                    iPtr[pIdx] = Int32(pIdx)
-                    pIdx += 1
-                }
+                let uvOffset = pIdx * 2
+                uv0DataArray[uvOffset] = speeds[pIdx]
+                uv0DataArray[uvOffset + 1] = offsets[pIdx]
+                
+                uv1DataArray[uvOffset] = lat2Norm
+                uv1DataArray[uvOffset + 1] = lon2Norm
+                
+                indices[pIdx] = Int32(pIdx)
+                pIdx += 1
             }
-        }}}}}
+        }
         
         let vertexData = Data(bytes: vertexDataArray, count: vertexDataArray.count * MemoryLayout<Float>.size)
         let vertexSource = SCNGeometrySource(data: vertexData, semantic: .vertex, vectorCount: totalParticles, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
@@ -102,18 +101,21 @@ extension CMEGeometryBuilder {
         let normalData = Data(bytes: normalDataArray, count: normalDataArray.count * MemoryLayout<Float>.size)
         let normalSource = SCNGeometrySource(data: normalData, semantic: .normal, vectorCount: totalParticles, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
 
-        let uvData = Data(bytes: uvDataArray, count: uvDataArray.count * MemoryLayout<Float>.size)
-        let uvSource = SCNGeometrySource(data: uvData, semantic: .texcoord, vectorCount: totalParticles, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
-
         let colorData = Data(bytes: colorDataArray, count: colorDataArray.count * MemoryLayout<Float>.size)
         let colorSource = SCNGeometrySource(data: colorData, semantic: .color, vectorCount: totalParticles, usesFloatComponents: true, componentsPerVector: 4, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 4)
+
+        let uv0Data = Data(bytes: uv0DataArray, count: uv0DataArray.count * MemoryLayout<Float>.size)
+        let uv0Source = SCNGeometrySource(data: uv0Data, semantic: .texcoord, vectorCount: totalParticles, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
+
+        let uv1Data = Data(bytes: uv1DataArray, count: uv1DataArray.count * MemoryLayout<Float>.size)
+        let uv1Source = SCNGeometrySource(data: uv1Data, semantic: .texcoord, vectorCount: totalParticles, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
 
         let element = SCNGeometryElement(data: Data(bytes: indices, count: indices.count * MemoryLayout<Int32>.size), primitiveType: .point, primitiveCount: totalParticles, bytesPerIndex: MemoryLayout<Int32>.size)
         element.pointSize = 5.0
         element.minimumPointScreenSpaceRadius = 1.0
         element.maximumPointScreenSpaceRadius = 15.0
 
-        let geometry = SCNGeometry(sources: [vertexSource, normalSource, uvSource, colorSource], elements: [element])
+        let geometry = SCNGeometry(sources: [vertexSource, normalSource, colorSource, uv0Source, uv1Source], elements: [element])
         
         let material = SCNMaterial()
         material.lightingModel = .constant
@@ -124,33 +126,28 @@ extension CMEGeometryBuilder {
         
         material.setValue(NSNumber(value: solarRadius), forKey: "u_solarRadius")
         
+        // NO VARYINGS! We use safe UVs and pass T down securely via the tangent channel
         material.shaderModifiers = [
             .geometry: """
             #pragma arguments
             float u_solarRadius;
 
-            // NATIVE SCENEKIT VARYINGS (No structs, 100% crash proof)
-            #pragma varyings
-            float customT;
-            float customPhase;
-            float customLoopIntensity;
-
             #pragma body
             float3 p1 = _geometry.position.xyz; 
             float3 p0 = _geometry.normal * u_solarRadius;
             
-            // Expand strictly positive colors back into spherical angles
-            float lat2 = (_geometry.color.r * 3.14159f) - 1.57079f;
-            float lon2 = (_geometry.color.g * 6.28318f) - 3.14159f;
-            float3 p2 = float3(cos(lat2)*sin(lon2), sin(lat2), cos(lat2)*cos(lon2)) * u_solarRadius;
-            
             float speed = _geometry.texcoords[0].x;
             float offset = _geometry.texcoords[0].y;
             
-            // Physics time
+            float lat2Norm = _geometry.texcoords[1].x;
+            float lon2Norm = _geometry.texcoords[1].y;
+            
+            float lat2 = (lat2Norm * 3.14159f) - 1.57079f;
+            float lon2 = (lon2Norm * 6.28318f) - 3.14159f;
+            float3 p2 = float3(cos(lat2)*sin(lon2), sin(lat2), cos(lat2)*cos(lon2)) * u_solarRadius;
+            
             float t = fract(offset + (scn_frame.time * speed));
             
-            // GPU Bezier Evaluation
             float u = 1.0f - t;
             float tt = t * t;
             float uu = u * u;
@@ -158,20 +155,18 @@ extension CMEGeometryBuilder {
             
             _geometry.position.xyz = basePos;
             
-            // Output to native varyings
-            out.customT = t;
-            out.customPhase = _geometry.color.b;
-            out.customLoopIntensity = _geometry.color.a;
+            // Pass 't' to Fragment via tangent
+            _geometry.tangent.x = t;
             """,
             
             .fragment: """
             #pragma transparent
             #pragma body
             
-            // Retrieve from native varyings
-            float t = in.customT;
-            float phase = in.customPhase;
-            float loopIntensity = in.customLoopIntensity;
+            // Unpack everything safely
+            float t = _surface.tangent.x;
+            float phase = _surface.color.r;
+            float loopIntensity = _surface.color.g;
 
             float3 coreColor = float3(1.0f, 0.9f, 0.5f);
             float3 midColor  = float3(1.0f, 0.4f, 0.0f);
@@ -219,4 +214,26 @@ extension CMEGeometryBuilder {
         return image
 #endif
     }
+}
+
+extension MagneticLoopLine {
+    func position(at t: Float) -> simd_float3 {
+        let u = 1.0 - t
+        let tt = t * t
+        let uu = u * u
+        
+        let term1 = p0 * uu
+        let term2 = p1 * (2.0 * u * t)
+        let term3 = p2 * tt
+        
+        return term1 + term2 + term3
+    }
+    
+    func tangent(at t: Float) -> simd_float3 {
+        let u = 1.0 - t
+        let dP1 = (p1 - p0) * (2.0 * u)
+        let dP2 = (p2 - p1) * (2.0 * t)
+        return simd_normalize(dP1 + dP2)
+    }
+    
 }
