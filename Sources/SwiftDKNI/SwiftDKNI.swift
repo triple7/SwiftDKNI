@@ -103,8 +103,7 @@ extension SwiftDKNI {
             openMagneticLines = magneticLines.filter { $0.isOpen }
             
             // Create the SceneKit node with glowing plasma materials already applied
-            let globalMagneticNode = geometryBuilder.createCoronalSurface(from: magneticLines)
-            globalMagneticNode.scale = SCNVector3(sphere.radius, sphere.radius, sphere.radius)
+            let globalMagneticNode = geometryBuilder.createCoronalSurface(from: magneticLines, solarRadius: Float(sphere.radius))
             coronalSurfaceNode.addChildNode(globalMagneticNode)
         }
         

@@ -309,7 +309,7 @@ public final class MagnetogramModeler: @unchecked Sendable {
                 break
             }
             
-            if currentRadius > 3.0 {
+            if currentRadius > 6.0 {
                 isOpen = true
                 p2 = currentPos
                 break
