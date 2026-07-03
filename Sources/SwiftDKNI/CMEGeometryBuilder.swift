@@ -207,10 +207,6 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             simd_float2(-1, -1), simd_float2(1, -1),
             simd_float2(-1,  1), simd_float2(1,  1)
         ]
-        let quadUVs: [simd_float2] = [
-            simd_float2(0, 0), simd_float2(1, 0),
-            simd_float2(0, 1), simd_float2(1, 1)
-        ]
         
         for line in validLines {
             let p1 = line.p1 * solarRadius
@@ -242,8 +238,8 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
                     normalDataArray[vOffset3 + 2] = p0Norm.z
                     
                     let vOffset2 = vIdx * 2
-                    uv0DataArray[vOffset2] = quadUVs[j].x
-                    uv0DataArray[vOffset2 + 1] = quadUVs[j].y
+                    uv0DataArray[vOffset2] = quadOffsets[j].x
+                    uv0DataArray[vOffset2 + 1] = quadOffsets[j].y
                     
                     uv1DataArray[vOffset2] = speed
                     uv1DataArray[vOffset2 + 1] = offset
@@ -301,6 +297,15 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         material.readsFromDepthBuffer = true
         material.isDoubleSided = true
         
+#if os(macOS)
+        let dummyColor = NSColor.black
+#else
+        let dummyColor = UIColor.black
+#endif
+        material.diffuse.contents = dummyColor
+        material.ambient.contents = dummyColor
+        material.specular.contents = dummyColor
+        
         material.setValue(NSNumber(value: solarRadius), forKey: "u_solarRadius")
         
         material.shaderModifiers = [
@@ -314,6 +319,9 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             
             float speed = _geometry.texcoords[1].x;
             float offset = _geometry.texcoords[1].y;
+            
+            float phase = _geometry.texcoords[2].x;
+            float loopIntensity = _geometry.texcoords[2].y;
             
             float lat2Norm = _geometry.tangent.x;
             float lon2Norm = _geometry.tangent.y;
@@ -339,30 +347,35 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             
             _geometry.position.xyz = basePos + localOffset;
             
-            _geometry.texcoords[1].x = t;
+            _geometry.texcoords[0] = float2(quadX, quadY);
+            _geometry.texcoords[1] = float2(t, phase);
+            _geometry.texcoords[2] = float2(loopIntensity, 0.0f);
             """,
             
             .fragment: """
             #pragma transparent
             #pragma body
             
-            float2 uv = _surface.diffuseTexcoord;
+            float2 quadUV = _surface.diffuseTexcoord;
             float t = _surface.ambientTexcoord.x;
-            float phase = _surface.specularTexcoord.x;
-            float loopIntensity = _surface.specularTexcoord.y;
+            float phase = _surface.ambientTexcoord.y;
+            float loopIntensity = _surface.specularTexcoord.x;
 
-            float dist = distance(uv, float2(0.5f, 0.5f));
-            if (dist > 0.5f) discard_fragment;
+            float dist = length(quadUV);
+            if (dist > 1.0f) {
+                discard_fragment();
+            }
 
             float3 coreColor = float3(1.0f, 0.9f, 0.5f);
             float3 midColor  = float3(1.0f, 0.4f, 0.0f);
             float3 baseColor = mix(midColor, coreColor, loopIntensity);
 
-            float alpha = smoothstep(0.5f, 0.0f, dist) * sin(t * 3.14159f);
+            float alpha = smoothstep(1.0f, 0.1f, dist);
+            float timeFade = sin(t * 3.14159f);
             float twinkle = (sin(scn_frame.time * 15.0f + phase * 6.28318f) * 0.5f) + 0.5f;
             
-            _surface.emission.rgb = baseColor * 6.0f;
-            _surface.transparent.a = alpha * pow(alpha, 1.5f) * (0.4f + 0.6f * twinkle);
+            _surface.emission.rgb = baseColor * 6.0f * (alpha * timeFade * twinkle);
+            _surface.diffuse.rgb = float3(0.0f);
             """
         ]
         
@@ -397,4 +410,3 @@ fileprivate func mixColor(_ a: simd_float4, _ b: simd_float4, factor: Float) -> 
     let f = max(0.0, min(1.0, factor))
     return a + (b - a) * f
 }
-

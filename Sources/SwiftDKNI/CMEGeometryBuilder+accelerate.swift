@@ -41,7 +41,7 @@ extension CMEGeometryBuilder {
         let speeds  = generateAcceleratedRandoms(count: totalParticles, min: 0.05, max: 0.25)
         let phases  = generateAcceleratedRandoms(count: totalParticles, min: 0.0, max: 1.0)
         
-        // 4 Vertices per particle
+        // 4 Vertices per particle quad
         let totalVertices = totalParticles * 4
         var vertexDataArray = [Float](repeating: 0.0, count: totalVertices * 3)
         var normalDataArray = [Float](repeating: 0.0, count: totalVertices * 3)
@@ -51,20 +51,16 @@ extension CMEGeometryBuilder {
         var uv2DataArray    = [Float](repeating: 0.0, count: totalVertices * 2) // Phase & Intensity
         var tangentDataArray = [Float](repeating: 0.0, count: totalVertices * 4) // Lat, Lon, Quad X/Y
         
-        var indices = [UInt32](repeating: 0, count: totalParticles * 6) // 2 Triangles per particle
+        var indices = [UInt32](repeating: 0, count: totalParticles * 6) // 2 Triangles per quad
         
         let pi = Float.pi
         let twoPi = Float.pi * 2.0
         var pIdx = 0
         
-        // Base Quad offsets and UVs
+        // Base Quad offsets (-1 to 1 for perfect math circle generation)
         let quadOffsets: [simd_float2] = [
             simd_float2(-1, -1), simd_float2(1, -1),
             simd_float2(-1,  1), simd_float2(1,  1)
-        ]
-        let quadUVs: [simd_float2] = [
-            simd_float2(0, 0), simd_float2(1, 0),
-            simd_float2(0, 1), simd_float2(1, 1)
         ]
         
         for line in validLines {
@@ -98,8 +94,8 @@ extension CMEGeometryBuilder {
                     normalDataArray[vOffset3 + 2] = p0Norm.z
                     
                     let vOffset2 = vIdx * 2
-                    uv0DataArray[vOffset2] = quadUVs[j].x
-                    uv0DataArray[vOffset2 + 1] = quadUVs[j].y
+                    uv0DataArray[vOffset2] = quadOffsets[j].x
+                    uv0DataArray[vOffset2 + 1] = quadOffsets[j].y
                     
                     uv1DataArray[vOffset2] = speed
                     uv1DataArray[vOffset2 + 1] = offset
@@ -158,12 +154,18 @@ extension CMEGeometryBuilder {
         material.readsFromDepthBuffer = true
         material.isDoubleSided = true
         
+        // Force SceneKit to activate diffuse, ambient, and specular UV channels
+#if os(macOS)
+        let dummyColor = NSColor.black
+#else
+        let dummyColor = UIColor.black
+#endif
+        material.diffuse.contents = dummyColor
+        material.ambient.contents = dummyColor
+        material.specular.contents = dummyColor
+        
         material.setValue(NSNumber(value: solarRadius), forKey: "u_solarRadius")
         
-        // Native mapping ensures no Shader compilation crashes.
-        // texcoords[0] -> diffuseTexcoord
-        // texcoords[1] -> ambientTexcoord
-        // texcoords[2] -> specularTexcoord
         material.shaderModifiers = [
             .geometry: """
             #pragma arguments
@@ -175,6 +177,9 @@ extension CMEGeometryBuilder {
             
             float speed = _geometry.texcoords[1].x;
             float offset = _geometry.texcoords[1].y;
+            
+            float phase = _geometry.texcoords[2].x;
+            float loopIntensity = _geometry.texcoords[2].y;
             
             float lat2Norm = _geometry.tangent.x;
             float lon2Norm = _geometry.tangent.y;
@@ -203,34 +208,42 @@ extension CMEGeometryBuilder {
             // Final Quad projection
             _geometry.position.xyz = basePos + localOffset;
             
-            // Inject 't' into the unused speed channel to pass to the fragment shader safely
-            _geometry.texcoords[1].x = t;
+            // Repack variables into UVs strictly for the fragment shader
+            _geometry.texcoords[0] = float2(quadX, quadY);
+            _geometry.texcoords[1] = float2(t, phase);
+            _geometry.texcoords[2] = float2(loopIntensity, 0.0f);
             """,
             
             .fragment: """
             #pragma transparent
             #pragma body
             
-            // Extract our physics payload natively
-            float2 uv = _surface.diffuseTexcoord;
+            // Extract our physics payload directly from the UVs
+            float2 quadUV = _surface.diffuseTexcoord;
             float t = _surface.ambientTexcoord.x;
-            float phase = _surface.specularTexcoord.x;
-            float loopIntensity = _surface.specularTexcoord.y;
+            float phase = _surface.ambientTexcoord.y;
+            float loopIntensity = _surface.specularTexcoord.x;
 
-            // Mathematical Plasma Circle using UV distance
-            float dist = distance(uv, float2(0.5f, 0.5f));
-            if (dist > 0.5f) discard_fragment;
+            // Mathematical Plasma Circle (-1 to +1)
+            float dist = length(quadUV);
+            if (dist > 1.0f) {
+                discard_fragment();
+            }
 
             float3 coreColor = float3(1.0f, 0.9f, 0.5f);
             float3 midColor  = float3(1.0f, 0.4f, 0.0f);
             float3 baseColor = mix(midColor, coreColor, loopIntensity);
 
             // Calculate soft, glowing falloff
-            float alpha = smoothstep(0.5f, 0.0f, dist) * sin(t * 3.14159f);
+            float alpha = smoothstep(1.0f, 0.1f, dist);
+            float timeFade = sin(t * 3.14159f);
             float twinkle = (sin(scn_frame.time * 15.0f + phase * 6.28318f) * 0.5f) + 0.5f;
             
-            _surface.emission.rgb = baseColor * 6.0f;
-            _surface.transparent.a = alpha * pow(alpha, 1.5f) * (0.4f + 0.6f * twinkle);
+            // Additive Blending magic: Corners must be pitch black (0,0,0) to be invisible
+            _surface.emission.rgb = baseColor * 6.0f * (alpha * timeFade * twinkle);
+            
+            // Prevent diffuse from interfering
+            _surface.diffuse.rgb = float3(0.0f);
             """
         ]
         
