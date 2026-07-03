@@ -352,7 +352,7 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             float loopIntensity = _surface.specularTexcoord.y;
 
             float dist = distance(uv, float2(0.5f, 0.5f));
-            if (dist > 0.5f) discard;
+            if (dist > 0.5f) discard_fragment;
 
             float3 coreColor = float3(1.0f, 0.9f, 0.5f);
             float3 midColor  = float3(1.0f, 0.4f, 0.0f);
