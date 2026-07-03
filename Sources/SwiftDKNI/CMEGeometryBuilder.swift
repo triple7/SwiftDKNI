@@ -251,7 +251,7 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
                 let speed = Float.random(in: 0.05...0.25)
                 let phase = Float.random(in: 0.0...1.0)
                 
-                // Pack into perfectly legal standard semantics (No Tangents!)
+                // Pack into perfectly legal standard semantics
                 vertexDataArray.append(contentsOf: [p1.x, p1.y, p1.z])
                 normalDataArray.append(contentsOf: [speed, phase, offset])
                 uvDataArray.append(contentsOf: [lat0, lon0])
@@ -288,10 +288,8 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         material.readsFromDepthBuffer = true
         material.diffuse.contents = createSoftGlowTexture()
         
-        // Pass the solar radius to the shader
-        var radiusFloat = solarRadius
-        let radiusData = Data(bytes: &radiusFloat, count: MemoryLayout<Float>.size)
-        material.setValue(radiusData, forKey: "u_solarRadius")
+        // Use NSNumber to securely pass the uniform float across CPU architectures
+        material.setValue(NSNumber(value: solarRadius), forKey: "u_solarRadius")
         
         material.shaderModifiers = [
             .geometry: """
@@ -299,48 +297,46 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             float u_solarRadius;
 
             #pragma body
-            // 1. Unpack our safely packed variables from standard semantics
+            // 1. Unpack our safely packed variables
             float3 p1 = _geometry.position.xyz; 
             
             float speed = _geometry.normal.x; 
             float phase = _geometry.normal.y; 
             float offset = _geometry.normal.z; 
             
-            // Reconstruct 3D Position for Root 1 (p0)
             float2 uv = _geometry.texcoords[0];
             float lat0 = uv.x;
             float lon0 = uv.y;
             float3 p0 = float3(cos(lat0)*sin(lon0), sin(lat0), cos(lat0)*cos(lon0)) * u_solarRadius;
             
-            // Reconstruct 3D Position for Root 2 (p2)
             float4 colData = _geometry.color;
-            float lat2 = (colData.x * 3.14159265) - 1.57079632;
-            float lon2 = (colData.y * 6.28318530) - 3.14159265;
+            float lat2 = (colData.x * 3.14159265f) - 1.57079632f;
+            float lon2 = (colData.y * 6.28318530f) - 3.14159265f;
             float3 p2 = float3(cos(lat2)*sin(lon2), sin(lat2), cos(lat2)*cos(lon2)) * u_solarRadius;
             
             float loopIntensity = colData.z;
-            float4 coreColor = float4(1.0, 0.9, 0.5, 1.0);
-            float4 midColor  = float4(1.0, 0.4, 0.0, 0.8);
+            float4 coreColor = float4(1.0f, 0.9f, 0.5f, 1.0f);
+            float4 midColor  = float4(1.0f, 0.4f, 0.0f, 0.8f);
             float4 baseColor = mix(midColor, coreColor, loopIntensity);
             
-            // 2. Physics: Flow from Positive to Negative
-            float t = fract(offset + (scn_frame.time * speed));
+            // 2. Physics: Flow from Positive to Negative using valid u_time
+            float t = fract(offset + (u_time * speed));
             
-            // 3. GPU Bezier Evaluation
-            float u = 1.0 - t;
+            // 3. GPU Bezier Evaluation (All literals suffixed with 'f')
+            float u = 1.0f - t;
             float tt = t * t;
             float uu = u * u;
-            float3 basePos = (p0 * uu) + (p1 * (2.0 * u * t)) + (p2 * tt);
+            float3 basePos = (p0 * uu) + (p1 * (2.0f * u * t)) + (p2 * tt);
             
             // 4. Volumetric Tube Expansion
             float sunScale = length(p0);
-            float angle = phase * 6.28318;
-            float tubeRadius = (sunScale * 0.015) * sin(t * 3.14159);
+            float angle = phase * 6.28318f;
+            float tubeRadius = (sunScale * 0.015f) * sin(t * 3.14159f);
             
-            float3 dP = normalize(2.0 * u * (p1 - p0) + 2.0 * t * (p2 - p1));
-            float3 upDir = float3(0.0, 1.0, 0.0);
+            float3 dP = normalize(2.0f * u * (p1 - p0) + 2.0f * t * (p2 - p1));
+            float3 upDir = float3(0.0f, 1.0f, 0.0f);
             float3 rightDir = cross(dP, upDir);
-            if (length(rightDir) < 0.001) { rightDir = float3(1.0, 0.0, 0.0); }
+            if (length(rightDir) < 0.001f) { rightDir = float3(1.0f, 0.0f, 0.0f); }
             rightDir = normalize(rightDir);
             float3 localUp = normalize(cross(rightDir, dP));
             
@@ -349,11 +345,8 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             // 5. Output Final GPU Position
             _geometry.position.xyz = basePos + tunnelOffset;
             
-            // Overwrite the normal so the fragment shader gets exactly 't' and 'phase'
             _geometry.normal.x = t;
             _geometry.normal.y = phase;
-            
-            // Overwrite color so the fragment shader gets the calculated base color
             _geometry.color = baseColor;
             """,
             
@@ -363,11 +356,11 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             float t = _surface.normal.x;
             float phase = _surface.normal.y;
             
-            float alpha = sin(t * 3.14159);
-            float twinkle = (sin(scn_frame.time * 15.0 + phase * 6.28) * 0.5) + 0.5;
+            float alpha = sin(t * 3.14159f);
+            float twinkle = (sin(u_time * 15.0f + phase * 6.28f) * 0.5f) + 0.5f;
             
-            _surface.transparent.a *= pow(alpha, 1.5) * (0.4 + 0.6 * twinkle);
-            _surface.emission.rgb = _surface.diffuse.rgb * 4.0;
+            _surface.transparent.a *= pow(alpha, 1.5f) * (0.4f + 0.6f * twinkle);
+            _surface.emission.rgb = _surface.diffuse.rgb * 4.0f;
             """
         ]
         
@@ -403,4 +396,3 @@ fileprivate func mixColor(_ a: simd_float4, _ b: simd_float4, factor: Float) -> 
     let f = max(0.0, min(1.0, factor))
     return a + (b - a) * f
 }
-
