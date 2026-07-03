@@ -182,7 +182,6 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             for i in 0...pointsPerLoop {
                 let t = Float(i) / Float(pointsPerLoop)
                 
-                // MULTIPLY BY RADIUS IMMEDIATELY
                 vertices.append(line.position(at: t) * solarRadius)
                 texcoords.append(simd_float2(t, phase))
                 
@@ -218,9 +217,11 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
     // MARK: - Dynamic GPU-Evaluated Energy Tunnels
     private func buildEnergyTunnels(from lines: [MagneticLoopLine], particlesPerLine: Int = 20, solarRadius: Float) -> SCNNode {
         var vertexDataArray: [Float] = [] // p1 (Apex)
-        var normalDataArray: [Float] = [] // speed, phase, offset
-        var uvDataArray: [Float] = []     // lat0, lon0
-        var colorDataArray: [Float] = []  // mappedLat2, mappedLon2, loopIntensity, 1.0
+        var uv0DataArray: [Float] = []    // p0.lat, p0.lon
+        var uv1DataArray: [Float] = []    // p2.lat, p2.lon
+        var uv2DataArray: [Float] = []    // speed, phase
+        var uv3DataArray: [Float] = []    // offset, loopIntensity
+        var colorDataArray: [Float] = []  // Dummy required to force SceneKit allocation
         var indices: [Int32] = []
         
         var currentIndex: Int32 = 0
@@ -230,19 +231,15 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             
             let p1 = line.p1 * solarRadius
             
-            // 1. Calculate spherical coordinates for p0 (Root 1)
+            // 1. Calculate safe spherical coordinates for p0 (Root 1)
             let p0_norm = simd_normalize(line.p0)
             let lat0 = asin(max(-1.0, min(1.0, p0_norm.y)))
             let lon0 = atan2(p0_norm.x, p0_norm.z)
             
-            // 2. Calculate spherical coordinates for p2 (Root 2)
+            // 2. Calculate safe spherical coordinates for p2 (Root 2)
             let p2_norm = simd_normalize(line.p2)
             let lat2 = asin(max(-1.0, min(1.0, p2_norm.y)))
             let lon2 = atan2(p2_norm.x, p2_norm.z)
-            
-            // Map p2 coordinates to [0, 1] to safely pack them into the .color semantic
-            let mappedLat2 = (lat2 + .pi / 2.0) / .pi
-            let mappedLon2 = (lon2 + .pi) / (2.0 * .pi)
             
             let loopIntensity = min(1.0, abs(line.intensity) / 1000.0)
             
@@ -251,35 +248,44 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
                 let speed = Float.random(in: 0.05...0.25)
                 let phase = Float.random(in: 0.0...1.0)
                 
-                // Pack into perfectly legal standard semantics
+                // Pack into completely immune, pure UV channels
                 vertexDataArray.append(contentsOf: [p1.x, p1.y, p1.z])
-                normalDataArray.append(contentsOf: [speed, phase, offset])
-                uvDataArray.append(contentsOf: [lat0, lon0])
-                colorDataArray.append(contentsOf: [mappedLat2, mappedLon2, loopIntensity, 1.0])
+                uv0DataArray.append(contentsOf: [lat0, lon0])
+                uv1DataArray.append(contentsOf: [lat2, lon2])
+                uv2DataArray.append(contentsOf: [speed, phase])
+                uv3DataArray.append(contentsOf: [offset, loopIntensity])
+                colorDataArray.append(contentsOf: [1.0, 1.0, 1.0, 1.0])
                 
                 indices.append(currentIndex)
                 currentIndex += 1
             }
         }
         
+        // Build Data Blocks
         let vertexData = Data(bytes: vertexDataArray, count: vertexDataArray.count * MemoryLayout<Float>.size)
-        let vertexSource = SCNGeometrySource(data: vertexData, semantic: .vertex, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
-
-        let normalData = Data(bytes: normalDataArray, count: normalDataArray.count * MemoryLayout<Float>.size)
-        let normalSource = SCNGeometrySource(data: normalData, semantic: .normal, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
-
-        let uvData = Data(bytes: uvDataArray, count: uvDataArray.count * MemoryLayout<Float>.size)
-        let uvSource = SCNGeometrySource(data: uvData, semantic: .texcoord, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
-
+        let uv0Data = Data(bytes: uv0DataArray, count: uv0DataArray.count * MemoryLayout<Float>.size)
+        let uv1Data = Data(bytes: uv1DataArray, count: uv1DataArray.count * MemoryLayout<Float>.size)
+        let uv2Data = Data(bytes: uv2DataArray, count: uv2DataArray.count * MemoryLayout<Float>.size)
+        let uv3Data = Data(bytes: uv3DataArray, count: uv3DataArray.count * MemoryLayout<Float>.size)
         let colorData = Data(bytes: colorDataArray, count: colorDataArray.count * MemoryLayout<Float>.size)
+        
+        let indexData = Data(bytes: indices, count: indices.count * MemoryLayout<Int32>.size)
+        
+        // Build Geometry Sources
+        let vertexSource = SCNGeometrySource(data: vertexData, semantic: .vertex, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
+        let uv0Source = SCNGeometrySource(data: uv0Data, semantic: .texcoord, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
+        let uv1Source = SCNGeometrySource(data: uv1Data, semantic: .texcoord, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
+        let uv2Source = SCNGeometrySource(data: uv2Data, semantic: .texcoord, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
+        let uv3Source = SCNGeometrySource(data: uv3Data, semantic: .texcoord, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
         let colorSource = SCNGeometrySource(data: colorData, semantic: .color, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 4, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 4)
 
-        let element = SCNGeometryElement(data: Data(bytes: indices, count: indices.count * MemoryLayout<Int32>.size), primitiveType: .point, primitiveCount: indices.count, bytesPerIndex: MemoryLayout<Int32>.size)
+        let element = SCNGeometryElement(data: indexData, primitiveType: .point, primitiveCount: indices.count, bytesPerIndex: MemoryLayout<Int32>.size)
         element.pointSize = 5.0
         element.minimumPointScreenSpaceRadius = 1.0
         element.maximumPointScreenSpaceRadius = 15.0
 
-        let geometry = SCNGeometry(sources: [vertexSource, normalSource, uvSource, colorSource], elements: [element])
+        // SceneKit natively binds multiple .texcoord sources to texcoords[0], texcoords[1], etc.
+        let geometry = SCNGeometry(sources: [vertexSource, uv0Source, uv1Source, uv2Source, uv3Source, colorSource], elements: [element])
         
         let material = SCNMaterial()
         material.lightingModel = .constant
@@ -288,7 +294,6 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         material.readsFromDepthBuffer = true
         material.diffuse.contents = createSoftGlowTexture()
         
-        // Use NSNumber to securely pass the uniform float across CPU architectures
         material.setValue(NSNumber(value: solarRadius), forKey: "u_solarRadius")
         
         material.shaderModifiers = [
@@ -297,38 +302,37 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             float u_solarRadius;
 
             #pragma body
-            // 1. Unpack our safely packed variables
+            // 1. Unpack our purely safe UV channels
             float3 p1 = _geometry.position.xyz; 
             
-            float speed = _geometry.normal.x; 
-            float phase = _geometry.normal.y; 
-            float offset = _geometry.normal.z; 
+            float2 uv0 = _geometry.texcoords[0]; 
+            float2 uv1 = _geometry.texcoords[1]; 
+            float2 uv2 = _geometry.texcoords[2]; 
+            float2 uv3 = _geometry.texcoords[3]; 
             
-            float2 uv = _geometry.texcoords[0];
-            float lat0 = uv.x;
-            float lon0 = uv.y;
+            float lat0 = uv0.x; float lon0 = uv0.y;
+            float lat2 = uv1.x; float lon2 = uv1.y;
+            float speed = uv2.x; float phase = uv2.y;
+            float offset = uv3.x; float loopIntensity = uv3.y;
+            
             float3 p0 = float3(cos(lat0)*sin(lon0), sin(lat0), cos(lat0)*cos(lon0)) * u_solarRadius;
-            
-            float4 colData = _geometry.color;
-            float lat2 = (colData.x * 3.14159265f) - 1.57079632f;
-            float lon2 = (colData.y * 6.28318530f) - 3.14159265f;
             float3 p2 = float3(cos(lat2)*sin(lon2), sin(lat2), cos(lat2)*cos(lon2)) * u_solarRadius;
             
-            float loopIntensity = colData.z;
+            // 2. Base Colors
             float4 coreColor = float4(1.0f, 0.9f, 0.5f, 1.0f);
-            float4 midColor  = float4(1.0f, 0.4f, 0.0f, 0.8f);
+            float4 midColor  = float4(1.0f, 0.4f, 0.0f, 1.0f);
             float4 baseColor = mix(midColor, coreColor, loopIntensity);
             
-            // 2. Physics: Flow from Positive to Negative using valid scn_frame.time
+            // 3. Physics: Flow from Positive to Negative
             float t = fract(offset + (scn_frame.time * speed));
             
-            // 3. GPU Bezier Evaluation (All literals suffixed with 'f')
+            // 4. GPU Bezier Evaluation
             float u = 1.0f - t;
             float tt = t * t;
             float uu = u * u;
             float3 basePos = (p0 * uu) + (p1 * (2.0f * u * t)) + (p2 * tt);
             
-            // 4. Volumetric Tube Expansion
+            // 5. Volumetric Tube Expansion
             float sunScale = length(p0);
             float angle = phase * 6.28318f;
             float tubeRadius = (sunScale * 0.015f) * sin(t * 3.14159f);
@@ -342,24 +346,22 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             
             float3 tunnelOffset = (rightDir * cos(angle) + localUp * sin(angle)) * tubeRadius;
             
-            // 5. Output Final GPU Position
+            // 6. Output Final GPU Position
             _geometry.position.xyz = basePos + tunnelOffset;
             
-            _geometry.normal.x = t;
-            _geometry.normal.y = phase;
-            _geometry.color = baseColor;
+            // 7. Calculate Alpha and Twinkle directly in Vertex Shader for massive performance boost
+            float alpha = sin(t * 3.14159f);
+            float twinkle = (sin(scn_frame.time * 15.0f + phase * 6.28f) * 0.5f) + 0.5f;
+            float finalAlpha = pow(alpha, 1.5f) * (0.4f + 0.6f * twinkle);
+            
+            // 8. Apply straight to geometry color!
+            _geometry.color = float4(baseColor.rgb, finalAlpha);
             """,
             
             .fragment: """
             #pragma transparent
             #pragma body
-            float t = _surface.normal.x;
-            float phase = _surface.normal.y;
-            
-            float alpha = sin(t * 3.14159f);
-            float twinkle = (sin(scn_frame.time * 15.0f + phase * 6.28f) * 0.5f) + 0.5f;
-            
-            _surface.transparent.a *= pow(alpha, 1.5f) * (0.4f + 0.6f * twinkle);
+            // SceneKit takes our beautifully computed _geometry.color and handles the rest!
             _surface.emission.rgb = _surface.diffuse.rgb * 4.0f;
             """
         ]
