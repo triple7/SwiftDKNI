@@ -13,7 +13,6 @@ import simd
 
 extension CMEGeometryBuilder {
     
-    // A blisteringly fast random float generator using Accelerate (vDSP)
     private func generateAcceleratedRandoms(count: Int, min: Float, max: Float) -> [Float] {
         // 1. Generate raw random bytes instantly at the C-level
         var randomInts = [UInt32](repeating: 0, count: count)
@@ -124,9 +123,100 @@ extension CMEGeometryBuilder {
 
         let geometry = SCNGeometry(sources: [vertexSource, normalSource, uvSource, colorSource], elements: [element])
         
-        // (Material and Shader setup remains identical to the previous implementation)
-        // ...
+        // --- NEW: FULL, CRASH-PROOF SHADER FOR THE ACCELERATE PIPELINE ---
+        let material = SCNMaterial()
+        material.lightingModel = .constant
+        material.blendMode = .add
+        material.writesToDepthBuffer = false
+        material.readsFromDepthBuffer = true
+        material.diffuse.contents = generateAcceleratedGlowTexture()
         
-        return SCNNode(geometry: geometry)
+        material.setValue(NSNumber(value: solarRadius), forKey: "u_solarRadius")
+        
+        material.shaderModifiers = [
+            .geometry: """
+            #pragma arguments
+            float u_solarRadius;
+
+            #pragma body
+            float3 p1 = _geometry.position.xyz; 
+            float3 p0 = _geometry.normal * u_solarRadius; // Recover original scale safely
+            
+            // Expand strictly positive colors back into spherical angles
+            float lat2 = (_geometry.color.r * 3.14159f) - 1.57079f;
+            float lon2 = (_geometry.color.g * 6.28318f) - 3.14159f;
+            float3 p2 = float3(cos(lat2)*sin(lon2), sin(lat2), cos(lat2)*cos(lon2)) * u_solarRadius;
+            
+            float speed = _geometry.texcoords[0].x;
+            float offset = _geometry.texcoords[0].y;
+            
+            // Physics time
+            float t = fract(offset + (scn_frame.time * speed));
+            
+            // GPU Bezier Evaluation
+            float u = 1.0f - t;
+            float tt = t * t;
+            float uu = u * u;
+            float3 basePos = (p0 * uu) + (p1 * (2.0f * u * t)) + (p2 * tt);
+            
+            _geometry.position.xyz = basePos;
+            
+            // Pass 't' securely down to the fragment shader via normal.x
+            _geometry.normal.x = t;
+            """,
+            
+            .fragment: """
+            #pragma transparent
+            #pragma body
+            float t = _surface.normal.x;
+            float phase = _surface.color.b;
+            float loopIntensity = _surface.color.a;
+
+            float3 coreColor = float3(1.0f, 0.9f, 0.5f);
+            float3 midColor  = float3(1.0f, 0.4f, 0.0f);
+            float3 baseColor = mix(midColor, coreColor, loopIntensity);
+
+            float alpha = sin(t * 3.14159f);
+            float twinkle = (sin(scn_frame.time * 15.0f + phase * 6.28318f) * 0.5f) + 0.5f;
+            
+            _surface.emission.rgb = baseColor * 4.0f;
+            _surface.transparent.a = _surface.diffuse.a * pow(alpha, 1.5f) * (0.4f + 0.6f * twinkle);
+            """
+        ]
+        
+        geometry.materials = [material]
+        
+        let node = SCNNode(geometry: geometry)
+        node.categoryBitMask = 2
+        return node
+    }
+    
+    // Local helper to ensure no 'private' access conflicts with the main file
+    private func generateAcceleratedGlowTexture() -> XImage {
+        let size = CGSize(width: 64, height: 64)
+#if os(macOS)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        let context = NSGraphicsContext.current!.cgContext
+#else
+        UIGraphicsBeginImageContextWithOptions(size, false, 0)
+        let context = UIGraphicsGetCurrentContext()!
+#endif
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let colors = [
+            CGColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 1.0),
+            CGColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 0.0)
+        ] as CFArray
+        let gradient = CGGradient(colorsSpace: colorSpace, colors: colors, locations: [0.0, 1.0])!
+        let center = CGPoint(x: size.width / 2, y: size.height / 2)
+        context.drawRadialGradient(gradient, startCenter: center, startRadius: 0, endCenter: center, endRadius: size.width / 2, options: [])
+#if os(macOS)
+        image.unlockFocus()
+        return image
+#else
+        let image = UIGraphicsGetImageFromCurrentImageContext()!
+        UIGraphicsEndImageContext()
+        return image
+#endif
     }
 }
