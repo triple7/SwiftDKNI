@@ -13,6 +13,7 @@ import simd
 
 extension CMEGeometryBuilder {
     
+    // A blisteringly fast random float generator using Accelerate (vDSP)
     private func generateAcceleratedRandoms(count: Int, min: Float, max: Float) -> [Float] {
         // 1. Generate raw random bytes instantly at the C-level
         var randomInts = [UInt32](repeating: 0, count: count)
@@ -142,7 +143,7 @@ extension CMEGeometryBuilder {
             float3 p1 = _geometry.position.xyz; 
             float3 p0 = _geometry.normal * u_solarRadius; // Recover original scale safely
             
-            // Expand strictly positive colors back into spherical angles
+            // Re-expand colors back into true spherical angles
             float lat2 = (_geometry.color.r * 3.14159f) - 1.57079f;
             float lon2 = (_geometry.color.g * 6.28318f) - 3.14159f;
             float3 p2 = float3(cos(lat2)*sin(lon2), sin(lat2), cos(lat2)*cos(lon2)) * u_solarRadius;
@@ -161,16 +162,20 @@ extension CMEGeometryBuilder {
             
             _geometry.position.xyz = basePos;
             
-            // Pass 't' securely down to the fragment shader via normal.x
+            // Pass 't', 'phase', and 'loopIntensity' securely down to the fragment shader
+            // using the unused normal channel
             _geometry.normal.x = t;
+            _geometry.normal.y = _geometry.color.b;
+            _geometry.normal.z = _geometry.color.a;
             """,
             
             .fragment: """
             #pragma transparent
             #pragma body
+            // Safely retrieve our physics data from the normal channel
             float t = _surface.normal.x;
-            float phase = _surface.color.b;
-            float loopIntensity = _surface.color.a;
+            float phase = _surface.normal.y;
+            float loopIntensity = _surface.normal.z;
 
             float3 coreColor = float3(1.0f, 0.9f, 0.5f);
             float3 midColor  = float3(1.0f, 0.4f, 0.0f);
@@ -179,6 +184,7 @@ extension CMEGeometryBuilder {
             float alpha = sin(t * 3.14159f);
             float twinkle = (sin(scn_frame.time * 15.0f + phase * 6.28318f) * 0.5f) + 0.5f;
             
+            // The texture's gradient inherently applies to diffuse.a
             _surface.emission.rgb = baseColor * 4.0f;
             _surface.transparent.a = _surface.diffuse.a * pow(alpha, 1.5f) * (0.4f + 0.6f * twinkle);
             """
