@@ -218,9 +218,10 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
     // MARK: - Dynamic GPU-Evaluated Energy Tunnels
     private func buildEnergyTunnels(from lines: [MagneticLoopLine], particlesPerLine: Int = 20, solarRadius: Float) -> SCNNode {
         var vertexDataArray: [Float] = [] // p1 (Apex)
-        var uv0DataArray: [Float] = []    // Speed & Phase
-        var uv1DataArray: [Float] = []    // p0 (Root 1) + Offset
-        var uv2DataArray: [Float] = []    // p2 (Root 2)
+        var normalDataArray: [Float] = [] // speed, phase, offset
+        var uv0DataArray: [Float] = []    // p0.x, p0.y
+        var uv1DataArray: [Float] = []    // p0.z, p2.x
+        var uv2DataArray: [Float] = []    // p2.y, p2.z
         var colorDataArray: [Float] = []  // Base Color
         var indices: [Int32] = []
         
@@ -229,7 +230,6 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         for line in lines {
             guard !line.isOpen else { continue }
             
-            // PRE-SCALE THE BEZIER CONTROL POINTS
             let p0 = line.p0 * solarRadius
             let p1 = line.p1 * solarRadius
             let p2 = line.p2 * solarRadius
@@ -244,10 +244,12 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
                 let speed = Float.random(in: 0.05...0.25)
                 let phase = Float.random(in: 0.0...1.0)
                 
+                // Pack into safe components
                 vertexDataArray.append(contentsOf: [p1.x, p1.y, p1.z])
-                uv0DataArray.append(contentsOf: [speed, phase])
-                uv1DataArray.append(contentsOf: [p0.x, p0.y, p0.z, offset])
-                uv2DataArray.append(contentsOf: [p2.x, p2.y, p2.z])
+                normalDataArray.append(contentsOf: [speed, phase, offset])
+                uv0DataArray.append(contentsOf: [p0.x, p0.y])
+                uv1DataArray.append(contentsOf: [p0.z, p2.x])
+                uv2DataArray.append(contentsOf: [p2.y, p2.z])
                 colorDataArray.append(contentsOf: [baseColor.x, baseColor.y, baseColor.z, baseColor.w])
                 
                 indices.append(currentIndex)
@@ -255,35 +257,26 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             }
         }
         
-        // 1. Vertex (p1)
         let vertexData = Data(bytes: vertexDataArray, count: vertexDataArray.count * MemoryLayout<Float>.size)
         let vertexSource = SCNGeometrySource(data: vertexData, semantic: .vertex, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
 
-        // 2. Texcoord 0 (Speed & Phase)
-        let uv0Data = Data(bytes: uv0DataArray, count: uv0DataArray.count * MemoryLayout<Float>.size)
-        let uv0Source = SCNGeometrySource(data: uv0Data, semantic: .texcoord, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
+        let normalData = Data(bytes: normalDataArray, count: normalDataArray.count * MemoryLayout<Float>.size)
+        let normalSource = SCNGeometrySource(data: normalData, semantic: .normal, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
 
-        // 3. Texcoord 1 (p0 & offset) - Safe from Normalization!
-        let uv1Data = Data(bytes: uv1DataArray, count: uv1DataArray.count * MemoryLayout<Float>.size)
-        let uv1Source = SCNGeometrySource(data: uv1Data, semantic: .texcoord, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 4, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 4)
+        let uv0Source = SCNGeometrySource(data: Data(bytes: uv0DataArray, count: uv0DataArray.count * MemoryLayout<Float>.size), semantic: .texcoord, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
+        let uv1Source = SCNGeometrySource(data: Data(bytes: uv1DataArray, count: uv1DataArray.count * MemoryLayout<Float>.size), semantic: .texcoord, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
+        let uv2Source = SCNGeometrySource(data: Data(bytes: uv2DataArray, count: uv2DataArray.count * MemoryLayout<Float>.size), semantic: .texcoord, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
 
-        // 4. Texcoord 2 (p2) - Safe from Tangent transforms!
-        let uv2Data = Data(bytes: uv2DataArray, count: uv2DataArray.count * MemoryLayout<Float>.size)
-        let uv2Source = SCNGeometrySource(data: uv2Data, semantic: .texcoord, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
-
-        // 5. Color
+        // FIX: Creating the missing colorSource here
         let colorData = Data(bytes: colorDataArray, count: colorDataArray.count * MemoryLayout<Float>.size)
         let colorSource = SCNGeometrySource(data: colorData, semantic: .color, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 4, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 4)
 
-        let indexData = Data(bytes: indices, count: indices.count * MemoryLayout<Int32>.size)
-        let element = SCNGeometryElement(data: indexData, primitiveType: .point, primitiveCount: indices.count, bytesPerIndex: MemoryLayout<Int32>.size)
-        
+        let element = SCNGeometryElement(data: Data(bytes: indices, count: indices.count * MemoryLayout<Int32>.size), primitiveType: .point, primitiveCount: indices.count, bytesPerIndex: MemoryLayout<Int32>.size)
         element.pointSize = 5.0
         element.minimumPointScreenSpaceRadius = 1.0
         element.maximumPointScreenSpaceRadius = 15.0
-        
-        // IMPORTANT: The order of sources dictates how they map to texcoords[0], texcoords[1], etc.
-        let geometry = SCNGeometry(sources: [vertexSource, uv0Source, uv1Source, uv2Source, colorSource], elements: [element])
+
+        let geometry = SCNGeometry(sources: [vertexSource, normalSource, uv0Source, uv1Source, uv2Source, colorSource], elements: [element])
         
         let material = SCNMaterial()
         material.lightingModel = .constant
@@ -295,13 +288,21 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         material.shaderModifiers = [
             .geometry: """
             #pragma body
-            // 1. Unpack our safe texture coordinate channels
+            // 1. Unpack our safely packed variables!
             float3 p1 = _geometry.position.xyz; 
-            float speed = _geometry.texcoords[0].x; 
-            float phase = _geometry.texcoords[0].y; 
-            float3 p0 = _geometry.texcoords[1].xyz;
-            float offset = _geometry.texcoords[1].w;
-            float3 p2 = _geometry.texcoords[2].xyz;
+            
+            // We hijacked the normal for [speed, phase, offset]
+            float speed = _geometry.normal.x; 
+            float phase = _geometry.normal.y; 
+            float offset = _geometry.normal.z; 
+            
+            // We packed p0 and p2 across three float2 texcoords!
+            float2 uv0 = _geometry.texcoords[0];
+            float2 uv1 = _geometry.texcoords[1];
+            float2 uv2 = _geometry.texcoords[2];
+            
+            float3 p0 = float3(uv0.x, uv0.y, uv1.x);
+            float3 p2 = float3(uv1.y, uv2.x, uv2.y);
             
             // 2. Physics: Flow from Positive to Negative
             float t = fract(offset + (scn_frame.time * speed));
@@ -313,7 +314,6 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             float3 basePos = (p0 * uu) + (p1 * (2.0 * u * t)) + (p2 * tt);
             
             // 4. Volumetric Tube Expansion
-            // Dynamically scale the tube thickness to the actual physical size of the sun
             float sunScale = length(p0);
             float angle = phase * 6.28318;
             float tubeRadius = (sunScale * 0.015) * sin(t * 3.14159);
@@ -330,7 +330,7 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             // 5. Output Final GPU Position
             _geometry.position.xyz = basePos + tunnelOffset;
             
-            // Pass 't' and 'phase' forward
+            // Overwrite the normal so the fragment shader gets exactly 't' and 'phase'
             _geometry.normal.x = t;
             _geometry.normal.y = phase;
             """,

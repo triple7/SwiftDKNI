@@ -153,14 +153,14 @@ extension SwiftDKNI {
         let activeRegions = try await noaaService.fetchActiveRegions()
         
         // Generate the surface layers
-        if let sunspotMask = generateSunspotTexture(from: activeRegions) {
+        if let sunspotMask = generateSunspotTexture(from: activeRegions, textureSize: CGSize(width: 4096, height: 2048)) {
             if let baseMaterial = sphere.materials.first {
                 
                 baseMaterial.lightingModel = .constant
                 let sdoService = NASASDOService()
                 
                 // --- LAYER 1: Core Surface Plasma (AIA 171) ---
-                if let liveSunTexture = try? await sdoService.fetchLatestImage(wavelength: .aia171, resolution: 2048) {
+                if let liveSunTexture = try? await sdoService.fetchLatestImage(wavelength: .aia171, resolution: 4096) {
                     baseMaterial.diffuse.contents = liveSunTexture
                 }
                 
@@ -169,7 +169,7 @@ extension SwiftDKNI {
                 baseMaterial.multiply.intensity = 0.85
                 
                 // --- LAYER 3: Atmospheric Coronal Holes (AIA 193) ---
-                if let coronalHoleMask = try? await sdoService.fetchLatestImage(wavelength: .aia193, resolution: 2048) {
+                if let coronalHoleMask = try? await sdoService.fetchLatestImage(wavelength: .aia193, resolution: 4096) {
                     baseMaterial.transparent.contents = coronalHoleMask
                 } else {
 #if os(macOS)
