@@ -57,9 +57,10 @@ extension CMEGeometryBuilder {
         let twoPi = Float.pi * 2.0
         var pIdx = 0
         
+        // Quad offsets mapping -1 to 1 for shape generation in Fragment Shader
         let quadUVs: [simd_float2] = [
-            simd_float2(0, 0), simd_float2(1, 0),
-            simd_float2(0, 1), simd_float2(1, 1)
+            simd_float2(-1, -1), simd_float2(1, -1),
+            simd_float2(-1,  1), simd_float2(1,  1)
         ]
         
         for line in validLines {
@@ -151,11 +152,10 @@ extension CMEGeometryBuilder {
         material.readsFromDepthBuffer = true
         material.isDoubleSided = true
         
-        // Use an actual image structure to force UV channels to stay open
-        let dummyTex = createDummyTexture()
-        material.diffuse.contents = dummyTex
-        material.ambient.contents = dummyTex
-        material.specular.contents = dummyTex
+        // CRITICAL FIX: Real image bounds guarantees SceneKit maps texcoords[0]
+        // to diffuseTexcoord, leaving UVs immune to optimizer stripping.
+        material.diffuse.contents = createWhiteTexture()
+        material.diffuse.mappingChannel = 0
         
         material.setValue(NSNumber(value: solarRadius), forKey: "u_solarRadius")
         
@@ -188,8 +188,9 @@ extension CMEGeometryBuilder {
             float uu = u * u;
             float3 basePos = (p0 * uu) + (p1 * (2.0f * u * t)) + (p2 * tt);
             
-            float quadX = (_geometry.texcoords[0].x * 2.0f) - 1.0f;
-            float quadY = (_geometry.texcoords[0].y * 2.0f) - 1.0f;
+            // Extract Quad coordinates from UV0
+            float quadX = _geometry.texcoords[0].x;
+            float quadY = _geometry.texcoords[0].y;
             
             float3 camRight = scn_node.inverseModelViewTransform[0].xyz;
             float3 camUp    = scn_node.inverseModelViewTransform[1].xyz;
@@ -199,63 +200,64 @@ extension CMEGeometryBuilder {
             
             _geometry.position.xyz = basePos + localOffset;
             
-            // Pass all variables safely using locked Texcoords
-            _geometry.texcoords[0] = float2(quadX, quadY);
-            _geometry.texcoords[1] = float2(t, phase);
-            _geometry.texcoords[2] = float2(loopIntensity, 0.0f);
-            """,
-            
-            .fragment: """
-            #pragma transparent
-            #pragma body
-            
-            float2 quadUV = _surface.diffuseTexcoord;
-            float t = _surface.ambientTexcoord.x;
-            float phase = _surface.ambientTexcoord.y;
-            float loopIntensity = _surface.specularTexcoord.x;
-
+            // MATH & PHYSICS LOGIC
             float3 coreColor = float3(1.0f, 0.9f, 0.5f);
             float3 midColor  = float3(1.0f, 0.4f, 0.0f);
             float3 baseColor = mix(midColor, coreColor, loopIntensity);
-
-            float dist = length(quadUV);
-            
-            // Shape Mask: Math Circle. Anything > 1.0 becomes invisible.
-            float shapeMask = smoothstep(1.0f, 0.8f, dist);
 
             float timeFade = sin(t * 3.14159f);
             float twinkle = (sin(scn_frame.time * 15.0f + phase * 6.28318f) * 0.5f) + 0.5f;
             
             float alpha = timeFade * pow(timeFade, 1.5f) * (0.4f + 0.6f * twinkle);
             
-            _surface.emission.rgb = baseColor * 8.0f * alpha * shapeMask;
+            // Write physics-driven color direct to vertex color. 
+            // Fragment shader reads this automatically via _surface.diffuse.rgb!
+            _geometry.color.rgb = baseColor * 8.0f * alpha;
+            _geometry.color.a = alpha;
+            """,
+            
+            .fragment: """
+            #pragma transparent
+            #pragma body
+            
+            // Extract Quad Coordinates (-1 to 1) perfectly preserved in diffuseTexcoord
+            float2 quadUV = _surface.diffuseTexcoord;
+
+            // DRAW PROCEDURAL SHAPE (Mathematical Circle)
+            float dist = length(quadUV);
+            float shapeMask = smoothstep(1.0f, 0.8f, dist);
+
+            // Read the final physics-adjusted brightness computed in the Vertex Shader
+            float3 vertexColor = _surface.diffuse.rgb;
+            
+            // Apply shape mask. 0.0 = invisible in Additive mode.
+            _surface.emission.rgb = vertexColor * shapeMask;
             _surface.diffuse.rgb = float3(0.0f);
             """
         ]
         
         geometry.materials = [material]
-        
         let node = SCNNode(geometry: geometry)
         node.categoryBitMask = 2
         return node
     }
     
-    // Fixed Dummy Texture to guarantee SceneKit UV allocations
-    private func createDummyTexture() -> XImage {
+    // Explicit white texture with properly defined boundaries
+    private func createWhiteTexture() -> XImage {
         let size = CGSize(width: 4, height: 4)
 #if os(macOS)
         let image = NSImage(size: size)
         image.lockFocus()
-        NSColor.black.setFill()
-        let bounds = NSRect(origin: .zero, size: size)
-        bounds.fill()
+        NSColor.white.setFill()
+        let rect = NSRect(origin: .zero, size: size)
+        rect.fill()
         image.unlockFocus()
         return image
 #else
         UIGraphicsBeginImageContextWithOptions(size, false, 1.0)
-        UIColor.black.setFill()
-        let bounds = CGRect(origin: .zero, size: size)
-        UIRectFill(bounds)
+        UIColor.white.setFill()
+        let rect = CGRect(origin: .zero, size: size)
+        UIRectFill(rect)
         let image = UIGraphicsGetImageFromCurrentImageContext()!
         UIGraphicsEndImageContext()
         return image
