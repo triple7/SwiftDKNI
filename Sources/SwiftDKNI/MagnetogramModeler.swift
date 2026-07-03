@@ -10,6 +10,7 @@ import SceneKit
 import CoreGraphics
 import Accelerate
 import simd
+import ImageIO // Required for cross-platform image exporting
 
 // Assuming you have imported your preferred FITS package
 import FITS
@@ -169,6 +170,30 @@ public final class MagnetogramModeler: @unchecked Sendable {
             
             throw NSError(domain: "MagnetogramError", code: 2, userInfo: [NSLocalizedDescriptionKey: "Failed to generate CGImage"])
         }
+        
+        // --- NEW: Save raw data as JPG for visualization ---
+        let fileManager = FileManager.default
+        if let docsDir = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first {
+            let starDir = docsDir.appendingPathComponent("star")
+            
+            // Create "star" directory if it doesn't exist
+            if !fileManager.fileExists(atPath: starDir.path) {
+                try? fileManager.createDirectory(at: starDir, withIntermediateDirectories: true, attributes: nil)
+            }
+            
+            let debugImageURL = starDir.appendingPathComponent("magnetogram_debug.jpg")
+            
+            // Cross-platform way to save CGImage to JPEG
+            if let destination = CGImageDestinationCreateWithURL(debugImageURL as CFURL, "public.jpeg" as CFString, 1, nil) {
+                CGImageDestinationAddImage(destination, cgImage, nil)
+                if CGImageDestinationFinalize(destination) {
+                    print("DEBUG FITS: Successfully saved visual magnetogram to \(debugImageURL.path)")
+                } else {
+                    print("DEBUG FITS: Failed to finalize JPEG save.")
+                }
+            }
+        }
+        // ---------------------------------------------------
         
         return MagnetogramData(cgImage: cgImage, width: width, height: height, fluxArray: dataArray)
     }
