@@ -13,7 +13,6 @@ import simd
 
 extension CMEGeometryBuilder {
     
-    // A blisteringly fast random float generator using Accelerate (vDSP)
     private func generateAcceleratedRandoms(count: Int, min: Float, max: Float) -> [Float] {
         // 1. Generate raw random bytes instantly at the C-level
         var randomInts = [UInt32](repeating: 0, count: count)
@@ -42,12 +41,12 @@ extension CMEGeometryBuilder {
         let totalParticles = validLines.count * particlesPerLine
         guard totalParticles > 0 else { return SCNNode() }
         
-        // 1. Generate ALL random numbers instantly via Accelerate
+        // Generate ALL random numbers instantly via Accelerate
         let offsets = generateAcceleratedRandoms(count: totalParticles, min: 0.0, max: 1.0)
         let speeds  = generateAcceleratedRandoms(count: totalParticles, min: 0.05, max: 0.25)
         let phases  = generateAcceleratedRandoms(count: totalParticles, min: 0.0, max: 1.0)
         
-        // 2. Pre-allocate arrays
+        // Pre-allocate arrays
         var vertexDataArray = [Float](repeating: 0.0, count: totalParticles * 3)
         var normalDataArray = [Float](repeating: 0.0, count: totalParticles * 3)
         var uvDataArray     = [Float](repeating: 0.0, count: totalParticles * 2)
@@ -58,7 +57,7 @@ extension CMEGeometryBuilder {
         let twoPi = Float.pi * 2.0
         var pIdx = 0
         
-        // 3. Use UnsafeMutableBufferPointers for zero-overhead memory writing
+        // Use UnsafeMutableBufferPointers for zero-overhead memory writing
         vertexDataArray.withUnsafeMutableBufferPointer { vPtr in
         normalDataArray.withUnsafeMutableBufferPointer { nPtr in
         uvDataArray.withUnsafeMutableBufferPointer { uPtr in
@@ -72,6 +71,8 @@ extension CMEGeometryBuilder {
                 
                 let lat2 = asin(max(-1.0, min(1.0, p2Norm.y)))
                 let lon2 = atan2(p2Norm.x, p2Norm.z)
+                
+                // Shift angles to a strictly positive range to avoid SceneKit clamping
                 let lat2Norm = (lat2 + (pi / 2.0)) / pi
                 let lon2Norm = (lon2 + pi) / twoPi
                 let loopIntensity = min(1.0, abs(line.intensity) / 1000.0)
@@ -104,7 +105,6 @@ extension CMEGeometryBuilder {
             }
         }}}}}
         
-        // 4. Construct SCNGeometry exactly as before
         let vertexData = Data(bytes: vertexDataArray, count: vertexDataArray.count * MemoryLayout<Float>.size)
         let vertexSource = SCNGeometrySource(data: vertexData, semantic: .vertex, vectorCount: totalParticles, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
 
@@ -124,7 +124,6 @@ extension CMEGeometryBuilder {
 
         let geometry = SCNGeometry(sources: [vertexSource, normalSource, uvSource, colorSource], elements: [element])
         
-        // --- NEW: FULL, CRASH-PROOF SHADER FOR THE ACCELERATE PIPELINE ---
         let material = SCNMaterial()
         material.lightingModel = .constant
         material.blendMode = .add
@@ -139,9 +138,15 @@ extension CMEGeometryBuilder {
             #pragma arguments
             float u_solarRadius;
 
+            // 100% Safe Native SceneKit Varyings for custom pipeline data
+            #pragma varyings
+            float customT;
+            float customPhase;
+            float customLoopIntensity;
+
             #pragma body
             float3 p1 = _geometry.position.xyz; 
-            float3 p0 = _geometry.normal * u_solarRadius; // Recover original scale safely
+            float3 p0 = _geometry.normal * u_solarRadius;
             
             // Re-expand colors back into true spherical angles
             float lat2 = (_geometry.color.r * 3.14159f) - 1.57079f;
@@ -162,20 +167,19 @@ extension CMEGeometryBuilder {
             
             _geometry.position.xyz = basePos;
             
-            // Pass 't', 'phase', and 'loopIntensity' securely down to the fragment shader
-            // using the unused normal channel
-            _geometry.normal.x = t;
-            _geometry.normal.y = _geometry.color.b;
-            _geometry.normal.z = _geometry.color.a;
+            // Send data to the fragment shader safely
+            out.customT = t;
+            out.customPhase = _geometry.color.b;
+            out.customLoopIntensity = _geometry.color.a;
             """,
             
             .fragment: """
             #pragma transparent
             #pragma body
-            // Safely retrieve our physics data from the normal channel
-            float t = _surface.normal.x;
-            float phase = _surface.normal.y;
-            float loopIntensity = _surface.normal.z;
+            // Retrieve safely from the varying structs SceneKit generated
+            float t = in.customT;
+            float phase = in.customPhase;
+            float loopIntensity = in.customLoopIntensity;
 
             float3 coreColor = float3(1.0f, 0.9f, 0.5f);
             float3 midColor  = float3(1.0f, 0.4f, 0.0f);
@@ -197,7 +201,6 @@ extension CMEGeometryBuilder {
         return node
     }
     
-    // Local helper to ensure no 'private' access conflicts with the main file
     private func generateAcceleratedGlowTexture() -> XImage {
         let size = CGSize(width: 64, height: 64)
 #if os(macOS)

@@ -37,7 +37,7 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
     
     public init() {}
     
-    private func createSoftGlowTexture() -> XImage {
+    func createSoftGlowTexture() -> XImage {
         let size = CGSize(width: 64, height: 64)
 #if os(macOS)
         let image = NSImage(size: size)
