@@ -12,6 +12,7 @@ import CoreGraphics
 import Accelerate
 import simd
 
+
 extension MagneticLoopLine {
     func position(at t: Float) -> simd_float3 {
         let u = 1.0 - t
@@ -400,7 +401,7 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         baseLoopsNode.geometry?.materials = [baseMaterial]
         baseLoopsNode.categoryBitMask = 2
         
-        let energyTunnelsNode = buildEnergyTunnels(from: lines, particlesPerLine: 20, solarRadius: solarRadius)
+        let energyTunnelsNode = buildAcceleratedEnergyTunnels(from: lines, particlesPerLine: 20, solarRadius: solarRadius)
         
         masterNode.addChildNode(baseLoopsNode)
         masterNode.addChildNode(energyTunnelsNode)

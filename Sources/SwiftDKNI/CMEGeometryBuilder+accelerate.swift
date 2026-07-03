@@ -106,7 +106,7 @@ extension CMEGeometryBuilder {
                     let cOffset = vIdx * 4
                     colorDataArray[cOffset] = phase
                     colorDataArray[cOffset + 1] = loopIntensity
-                    colorDataArray[cOffset + 2] = 1.0
+                    colorDataArray[cOffset + 2] = 1.0 // Unused
                     colorDataArray[cOffset + 3] = 1.0
                 }
                 
@@ -131,6 +131,7 @@ extension CMEGeometryBuilder {
         let normalData = Data(bytes: normalDataArray, count: normalDataArray.count * MemoryLayout<Float>.size)
         let normalSource = SCNGeometrySource(data: normalData, semantic: .normal, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
 
+        // UV0 handles the procedural image texture mapping safely
         let uv0Data = Data(bytes: uv0DataArray, count: uv0DataArray.count * MemoryLayout<Float>.size)
         let uv0Source = SCNGeometrySource(data: uv0Data, semantic: .texcoord, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
 
@@ -154,12 +155,15 @@ extension CMEGeometryBuilder {
         material.readsFromDepthBuffer = true
         material.isDoubleSided = true
         
-        // This real image texture guarantees SceneKit maps UV0, avoiding all compiler traps
+        // Use the generated circular soft glow image.
+        // SceneKit safely and automatically maps this to texcoords[0].
         material.diffuse.contents = generateAcceleratedGlowTexture()
         
         material.setValue(NSNumber(value: solarRadius), forKey: "u_solarRadius")
         
         // We do ALL the math cleanly in the geometry modifier. No fragment shader needed!
+        // We calculate the color and alpha here and inject it into _geometry.color.
+        // SceneKit's native pipeline automatically multiplies this by the circular diffuse texture.
         material.shaderModifiers = [
             .geometry: """
             #pragma arguments
