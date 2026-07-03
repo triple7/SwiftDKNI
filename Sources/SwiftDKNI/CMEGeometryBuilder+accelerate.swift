@@ -14,20 +14,16 @@ import simd
 extension CMEGeometryBuilder {
     
     private func generateAcceleratedRandoms(count: Int, min: Float, max: Float) -> [Float] {
-        // 1. Generate raw random bytes instantly at the C-level
         var randomInts = [UInt32](repeating: 0, count: count)
         arc4random_buf(&randomInts, count * MemoryLayout<UInt32>.size)
         
         var randomFloats = [Float](repeating: 0.0, count: count)
         
-        // 2. Convert UInt32 to Float natively using vector hardware
         vDSP_vfltu32(randomInts, 1, &randomFloats, 1, vDSP_Length(count))
         
-        // 3. Divide by UInt32.max to normalize everything to 0.0 ... 1.0
         var divisor = Float(UInt32.max)
         vDSP_vsdiv(randomFloats, 1, &divisor, &randomFloats, 1, vDSP_Length(count))
         
-        // 4. Scale to the requested range (min ... max) using Vector Multiply and Add
         var range = max - min
         var offset = min
         vDSP_vsmsa(randomFloats, 1, &range, &offset, &randomFloats, 1, vDSP_Length(count))
@@ -41,12 +37,10 @@ extension CMEGeometryBuilder {
         let totalParticles = validLines.count * particlesPerLine
         guard totalParticles > 0 else { return SCNNode() }
         
-        // Generate ALL random numbers instantly via Accelerate
         let offsets = generateAcceleratedRandoms(count: totalParticles, min: 0.0, max: 1.0)
         let speeds  = generateAcceleratedRandoms(count: totalParticles, min: 0.05, max: 0.25)
         let phases  = generateAcceleratedRandoms(count: totalParticles, min: 0.0, max: 1.0)
         
-        // Pre-allocate arrays
         var vertexDataArray = [Float](repeating: 0.0, count: totalParticles * 3)
         var normalDataArray = [Float](repeating: 0.0, count: totalParticles * 3)
         var uvDataArray     = [Float](repeating: 0.0, count: totalParticles * 2)
@@ -57,7 +51,6 @@ extension CMEGeometryBuilder {
         let twoPi = Float.pi * 2.0
         var pIdx = 0
         
-        // Use UnsafeMutableBufferPointers for zero-overhead memory writing
         vertexDataArray.withUnsafeMutableBufferPointer { vPtr in
         normalDataArray.withUnsafeMutableBufferPointer { nPtr in
         uvDataArray.withUnsafeMutableBufferPointer { uPtr in
@@ -72,13 +65,11 @@ extension CMEGeometryBuilder {
                 let lat2 = asin(max(-1.0, min(1.0, p2Norm.y)))
                 let lon2 = atan2(p2Norm.x, p2Norm.z)
                 
-                // Shift angles to a strictly positive range to avoid SceneKit clamping
                 let lat2Norm = (lat2 + (pi / 2.0)) / pi
                 let lon2Norm = (lon2 + pi) / twoPi
                 let loopIntensity = min(1.0, abs(line.intensity) / 1000.0)
                 
                 for _ in 0..<particlesPerLine {
-                    // Direct pointer arithmetic - no Swift Array overhead
                     let vOffset = pIdx * 3
                     vPtr[vOffset] = p1.x
                     vPtr[vOffset + 1] = p1.y
@@ -138,7 +129,7 @@ extension CMEGeometryBuilder {
             #pragma arguments
             float u_solarRadius;
 
-            // 100% Safe Native SceneKit Varyings for custom pipeline data
+            // NATIVE SCENEKIT VARYINGS (No structs, 100% crash proof)
             #pragma varyings
             float customT;
             float customPhase;
@@ -148,7 +139,7 @@ extension CMEGeometryBuilder {
             float3 p1 = _geometry.position.xyz; 
             float3 p0 = _geometry.normal * u_solarRadius;
             
-            // Re-expand colors back into true spherical angles
+            // Expand strictly positive colors back into spherical angles
             float lat2 = (_geometry.color.r * 3.14159f) - 1.57079f;
             float lon2 = (_geometry.color.g * 6.28318f) - 3.14159f;
             float3 p2 = float3(cos(lat2)*sin(lon2), sin(lat2), cos(lat2)*cos(lon2)) * u_solarRadius;
@@ -167,7 +158,7 @@ extension CMEGeometryBuilder {
             
             _geometry.position.xyz = basePos;
             
-            // Send data to the fragment shader safely
+            // Output to native varyings
             out.customT = t;
             out.customPhase = _geometry.color.b;
             out.customLoopIntensity = _geometry.color.a;
@@ -176,7 +167,8 @@ extension CMEGeometryBuilder {
             .fragment: """
             #pragma transparent
             #pragma body
-            // Retrieve safely from the varying structs SceneKit generated
+            
+            // Retrieve from native varyings
             float t = in.customT;
             float phase = in.customPhase;
             float loopIntensity = in.customLoopIntensity;
@@ -188,7 +180,6 @@ extension CMEGeometryBuilder {
             float alpha = sin(t * 3.14159f);
             float twinkle = (sin(scn_frame.time * 15.0f + phase * 6.28318f) * 0.5f) + 0.5f;
             
-            // The texture's gradient inherently applies to diffuse.a
             _surface.emission.rgb = baseColor * 4.0f;
             _surface.transparent.a = _surface.diffuse.a * pow(alpha, 1.5f) * (0.4f + 0.6f * twinkle);
             """

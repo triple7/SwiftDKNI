@@ -37,7 +37,7 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
     
     public init() {}
     
-    func createSoftGlowTexture() -> XImage {
+    private func createSoftGlowTexture() -> XImage {
         let size = CGSize(width: 64, height: 64)
 #if os(macOS)
         let image = NSImage(size: size)
@@ -75,7 +75,6 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         )
     }
     
-    // MARK: - THE ULTIMATE CORRELATION: DONKI + FITS PFSS
     public func buildDONKICorrelatedCMECloud(
         eventLatitude: Float,
         eventLongitude: Float,
@@ -165,7 +164,6 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         return SCNGeometry(sources: [source, uvSource, colorSource], elements: [element])
     }
     
-    // MARK: - Static Magnetic Backbones
     public func buildDataDrivenMagneticLoops(from lines: [MagneticLoopLine], pointsPerLoop: Int = 50, solarRadius: Float) -> SCNGeometry {
         var vertices: [simd_float3] = []
         var indices: [Int32] = []
@@ -214,7 +212,162 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         return SCNGeometry(sources: [source, uvSource, colorSource], elements: [element])
     }
     
-    // MARK: - SceneKit Master Node
+    private func buildEnergyTunnels(from lines: [MagneticLoopLine], particlesPerLine: Int = 20, solarRadius: Float) -> SCNNode {
+        var vertexDataArray: [Float] = []
+        var normalDataArray: [Float] = []
+        var uvDataArray: [Float] = []
+        var colorDataArray: [Float] = []
+        var indices: [Int32] = []
+        
+        let validLines = lines.filter { !$0.isOpen }
+        let totalParticles = validLines.count * particlesPerLine
+        
+        vertexDataArray.reserveCapacity(totalParticles * 3)
+        normalDataArray.reserveCapacity(totalParticles * 3)
+        uvDataArray.reserveCapacity(totalParticles * 2)
+        colorDataArray.reserveCapacity(totalParticles * 4)
+        indices.reserveCapacity(totalParticles)
+        
+        var currentIndex: Int32 = 0
+        let pi = Float.pi
+        let twoPi = Float.pi * 2.0
+        
+        for line in validLines {
+            let p1 = line.p1 * solarRadius
+            
+            let p0Norm = simd_normalize(line.p0)
+            let p2Norm = simd_normalize(line.p2)
+            
+            let lat2 = asin(max(-1.0, min(1.0, p2Norm.y)))
+            let lon2 = atan2(p2Norm.x, p2Norm.z)
+            
+            // ANTI-GEYSER FIX: SceneKit clamps negative colors to 0. Map to 0...1.
+            let lat2Norm = (lat2 + (pi / 2.0)) / pi
+            let lon2Norm = (lon2 + pi) / twoPi
+            
+            let loopIntensity = min(1.0, abs(line.intensity) / 1000.0)
+            
+            for _ in 0..<particlesPerLine {
+                let offset = Float.random(in: 0.0...1.0)
+                let speed = Float.random(in: 0.05...0.25)
+                let phase = Float.random(in: 0.0...1.0)
+                
+                vertexDataArray.append(p1.x)
+                vertexDataArray.append(p1.y)
+                vertexDataArray.append(p1.z)
+                
+                normalDataArray.append(p0Norm.x)
+                normalDataArray.append(p0Norm.y)
+                normalDataArray.append(p0Norm.z)
+                
+                uvDataArray.append(speed)
+                uvDataArray.append(offset)
+                
+                colorDataArray.append(lat2Norm)
+                colorDataArray.append(lon2Norm)
+                colorDataArray.append(phase)
+                colorDataArray.append(loopIntensity)
+                
+                indices.append(currentIndex)
+                currentIndex += 1
+            }
+        }
+        
+        let vertexData = Data(bytes: vertexDataArray, count: vertexDataArray.count * MemoryLayout<Float>.size)
+        let vertexSource = SCNGeometrySource(data: vertexData, semantic: .vertex, vectorCount: Int(totalParticles), usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
+
+        let normalData = Data(bytes: normalDataArray, count: normalDataArray.count * MemoryLayout<Float>.size)
+        let normalSource = SCNGeometrySource(data: normalData, semantic: .normal, vectorCount: Int(totalParticles), usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
+
+        let uvData = Data(bytes: uvDataArray, count: uvDataArray.count * MemoryLayout<Float>.size)
+        let uvSource = SCNGeometrySource(data: uvData, semantic: .texcoord, vectorCount: Int(totalParticles), usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
+
+        let colorData = Data(bytes: colorDataArray, count: colorDataArray.count * MemoryLayout<Float>.size)
+        let colorSource = SCNGeometrySource(data: colorData, semantic: .color, vectorCount: Int(totalParticles), usesFloatComponents: true, componentsPerVector: 4, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 4)
+
+        let element = SCNGeometryElement(data: Data(bytes: indices, count: indices.count * MemoryLayout<Int32>.size), primitiveType: .point, primitiveCount: Int(totalParticles), bytesPerIndex: MemoryLayout<Int32>.size)
+        element.pointSize = 5.0
+        element.minimumPointScreenSpaceRadius = 1.0
+        element.maximumPointScreenSpaceRadius = 15.0
+
+        let geometry = SCNGeometry(sources: [vertexSource, normalSource, uvSource, colorSource], elements: [element])
+        
+        let material = SCNMaterial()
+        material.lightingModel = .constant
+        material.blendMode = .add
+        material.writesToDepthBuffer = false
+        material.readsFromDepthBuffer = true
+        material.diffuse.contents = createSoftGlowTexture()
+        
+        material.setValue(NSNumber(value: solarRadius), forKey: "u_solarRadius")
+        
+        material.shaderModifiers = [
+            .geometry: """
+            #pragma arguments
+            float u_solarRadius;
+
+            // NATIVE SCENEKIT VARYINGS (No structs, 100% crash proof)
+            #pragma varyings
+            float customT;
+            float customPhase;
+            float customLoopIntensity;
+
+            #pragma body
+            float3 p1 = _geometry.position.xyz; 
+            float3 p0 = _geometry.normal * u_solarRadius;
+            
+            // Expand strictly positive colors back into spherical angles
+            float lat2 = (_geometry.color.r * 3.14159f) - 1.57079f;
+            float lon2 = (_geometry.color.g * 6.28318f) - 3.14159f;
+            float3 p2 = float3(cos(lat2)*sin(lon2), sin(lat2), cos(lat2)*cos(lon2)) * u_solarRadius;
+            
+            float speed = _geometry.texcoords[0].x;
+            float offset = _geometry.texcoords[0].y;
+            
+            // Physics time
+            float t = fract(offset + (scn_frame.time * speed));
+            
+            // GPU Bezier Evaluation
+            float u = 1.0f - t;
+            float tt = t * t;
+            float uu = u * u;
+            float3 basePos = (p0 * uu) + (p1 * (2.0f * u * t)) + (p2 * tt);
+            
+            _geometry.position.xyz = basePos;
+            
+            // Output to native varyings
+            out.customT = t;
+            out.customPhase = _geometry.color.b;
+            out.customLoopIntensity = _geometry.color.a;
+            """,
+            
+            .fragment: """
+            #pragma transparent
+            #pragma body
+            
+            // Retrieve from native varyings
+            float t = in.customT;
+            float phase = in.customPhase;
+            float loopIntensity = in.customLoopIntensity;
+
+            float3 coreColor = float3(1.0f, 0.9f, 0.5f);
+            float3 midColor  = float3(1.0f, 0.4f, 0.0f);
+            float3 baseColor = mix(midColor, coreColor, loopIntensity);
+
+            float alpha = sin(t * 3.14159f);
+            float twinkle = (sin(scn_frame.time * 15.0f + phase * 6.28318f) * 0.5f) + 0.5f;
+            
+            _surface.emission.rgb = baseColor * 4.0f;
+            _surface.transparent.a = _surface.diffuse.a * pow(alpha, 1.5f) * (0.4f + 0.6f * twinkle);
+            """
+        ]
+        
+        geometry.materials = [material]
+        let node = SCNNode(geometry: geometry)
+        node.categoryBitMask = 2
+        return node
+    }
+    
     public func createCoronalSurface(from lines: [MagneticLoopLine], solarRadius: Float) -> SCNNode {
         let masterNode = SCNNode()
         
@@ -227,7 +380,7 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         baseLoopsNode.geometry?.materials = [baseMaterial]
         baseLoopsNode.categoryBitMask = 2
         
-        let energyTunnelsNode = buildAcceleratedEnergyTunnels(from: lines, particlesPerLine: 20, solarRadius: solarRadius)
+        let energyTunnelsNode = buildEnergyTunnels(from: lines, particlesPerLine: 20, solarRadius: solarRadius)
         
         masterNode.addChildNode(baseLoopsNode)
         masterNode.addChildNode(energyTunnelsNode)
@@ -240,4 +393,3 @@ fileprivate func mixColor(_ a: simd_float4, _ b: simd_float4, factor: Float) -> 
     let f = max(0.0, min(1.0, factor))
     return a + (b - a) * f
 }
-
