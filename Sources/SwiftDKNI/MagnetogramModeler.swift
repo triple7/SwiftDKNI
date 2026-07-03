@@ -86,21 +86,54 @@ public final class MagnetogramModeler: @unchecked Sendable {
         let height = prime.naxis(2) ?? 1440
         let pixelCount = width * height
         
-        // 3. Extract the raw byte data
-        guard let rawData = prime.dataUnit, rawData.count >= pixelCount * 4 else {
+        // --- CHECK BITPIX BEFORE CHECKING RAW DATA COUNT ---
+        // FIX: Grab bitpix directly from the prime object!
+        let bitpix = prime.bitpix?.rawValue ?? -32
+        
+        let bytesPerPixel = abs(bitpix) / 8 // e.g., 32 bit = 4 bytes, 16 bit = 2 bytes
+        
+        // 3. Extract the raw byte data using dynamic byte size
+        guard let rawData = prime.dataUnit, rawData.count >= pixelCount * bytesPerPixel else {
             throw NSError(domain: "MagnetogramError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing or incomplete FITS data block"])
         }
         
-        // 4. Convert Big-Endian FITS bytes to native Swift Floats
+        // 4. Convert Big-Endian FITS bytes to native Swift Floats safely based on standard BITPIX types
         var dataArray = [Float](repeating: 0.0, count: pixelCount)
         
         rawData.withUnsafeBytes { rawBuffer in
-            // Bind the raw bytes to 32-bit unsigned integers
-            let pointer = rawBuffer.bindMemory(to: UInt32.self)
-            
-            for i in 0..<pixelCount {
-                let nativeUInt32 = UInt32(bigEndian: pointer[i])
-                dataArray[i] = Float(bitPattern: nativeUInt32)
+            switch bitpix {
+            case 8:
+                // Unsigned 8-bit Int
+                let pointer = rawBuffer.bindMemory(to: UInt8.self)
+                for i in 0..<pixelCount {
+                    dataArray[i] = Float(pointer[i])
+                }
+            case 16:
+                // Signed 16-bit Int
+                let pointer = rawBuffer.bindMemory(to: Int16.self)
+                for i in 0..<pixelCount {
+                    dataArray[i] = Float(Int16(bigEndian: pointer[i]))
+                }
+            case 32:
+                // Signed 32-bit Int
+                let pointer = rawBuffer.bindMemory(to: Int32.self)
+                for i in 0..<pixelCount {
+                    dataArray[i] = Float(Int32(bigEndian: pointer[i]))
+                }
+            case -32:
+                // IEEE-754 Float32
+                let pointer = rawBuffer.bindMemory(to: UInt32.self)
+                for i in 0..<pixelCount {
+                    dataArray[i] = Float(bitPattern: UInt32(bigEndian: pointer[i]))
+                }
+            case -64:
+                // IEEE-754 Float64 (Double)
+                let pointer = rawBuffer.bindMemory(to: UInt64.self)
+                for i in 0..<pixelCount {
+                    dataArray[i] = Float(Double(bitPattern: UInt64(bigEndian: pointer[i])))
+                }
+            default:
+                print("Warning: Unsupported FITS BITPIX format: \(bitpix).")
             }
         }
         
@@ -141,7 +174,8 @@ public final class MagnetogramModeler: @unchecked Sendable {
 
     // MARK: - 4. PFSS Modeling & Magnetic Integration
     
-    private func extractActiveRegions(from data: MagnetogramData, thresholdGauss: Float = 500.0) -> (positive: [MagneticRegion], negative: [MagneticRegion]) {
+    // LOWERED THRESHOLD: Synoptic maps dilute peak flux via averaging. 500G is often too high.
+    private func extractActiveRegions(from data: MagnetogramData, thresholdGauss: Float = 150.0) -> (positive: [MagneticRegion], negative: [MagneticRegion]) {
         var posRegions: [MagneticRegion] = []
         var negRegions: [MagneticRegion] = []
         
@@ -277,4 +311,3 @@ public final class MagnetogramModeler: @unchecked Sendable {
         return loops
     }
 }
-
