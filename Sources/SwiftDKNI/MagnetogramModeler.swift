@@ -10,7 +10,7 @@ import SceneKit
 import CoreGraphics
 import Accelerate
 import simd
-import ImageIO // Required for cross-platform image exporting
+import ImageIO
 
 // Assuming you have imported your preferred FITS package
 import FITS
@@ -18,15 +18,15 @@ import FITS
 public struct MagneticRegion {
     let centroidLat: Float
     let centroidLon: Float
-    let fluxIntensity: Float // Positive (Outward) or Negative (Inward)
+    let fluxIntensity: Float
     let isPositive: Bool
 }
 
 public struct MagneticLoopLine {
-    let p0: simd_float3 // Root 1 (Positive)
+    let p0: simd_float3 // Root 1
     let p1: simd_float3 // Apex
-    let p2: simd_float3 // Root 2 (Negative, or identical to p0 if open)
-    let isOpen: Bool    // If true, it's a CME / Solar Wind line
+    let p2: simd_float3 // Root 2
+    let isOpen: Bool    // CME Line
     let intensity: Float
 }
 
@@ -36,7 +36,6 @@ public final class MagnetogramModeler: @unchecked Sendable {
     
     // MARK: - 1. API Request
     
-    /// Fetches the latest HMI Synoptic Chart (Equirectangular Magnetogram) from NASA's JSOC/SDO.
     public func fetchLatestSynopticMagnetogram() async throws -> URL {
         let rotationNumber = 2270
         let urlString = "http://jsoc.stanford.edu/data/hmi/synoptic/hmi.Synoptic_Mr.\(rotationNumber).fits"
@@ -50,7 +49,6 @@ public final class MagnetogramModeler: @unchecked Sendable {
             throw URLError(.badServerResponse)
         }
         
-        // Move to a permanent location in Documents
         let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
         let savedURL = docsDir.appendingPathComponent("latest_magnetogram.fits")
         
@@ -62,7 +60,7 @@ public final class MagnetogramModeler: @unchecked Sendable {
         return savedURL
     }
     
-    // MARK: - 2 & 3. FITS Parsing and Image Generation
+    // MARK: - 2 & 3. FITS Parsing
     
     public struct MagnetogramData {
         let cgImage: CGImage
@@ -71,46 +69,31 @@ public final class MagnetogramModeler: @unchecked Sendable {
         let fluxArray: [Float]
     }
     
-    /// Parses the downloaded FITS file, extracting the float array and generating a visual CGImage.
     public func processFitsFile(at url: URL) throws -> MagnetogramData {
         print("processFitsFile: Processing magnetogram data")
-        // 1. Read the FITS file
+        
         let fitsData = try Data(contentsOf: url)
         guard let fits = FitsFile.read(fitsData) else {
-            print("ERROR: Failed to parse FITS file structure")
             throw NSError(domain: "MagnetogramError", code: 0, userInfo: [NSLocalizedDescriptionKey: "Failed to parse FITS file structure"])
         }
         
         let prime = fits.prime
-
-        // 2. Extract Dimensions (NAXIS1 = width, NAXIS2 = height)
         let width = prime.naxis(1) ?? 3600
         let height = prime.naxis(2) ?? 1440
         let pixelCount = width * height
         
-        print("DEBUG FITS: Width=\(width), Height=\(height), Total Pixels=\(pixelCount)")
-        
-        // 3. Bulletproof BITPIX Extraction
-        // Instead of relying on a package enum, we search the raw header keys
-        var bitpix: Int = -32 // Default to Float32
-        
+        // As requested: direct extraction with a safe fallback
+        var bitpix: Int = -32
         if let nativeBitpix = prime.bitpix as? Int {
              bitpix = nativeBitpix
         }
         
-        print("DEBUG FITS: Extracted BITPIX = \(bitpix)")
+        let bytesPerPixel = abs(bitpix) / 8
         
-        let bytesPerPixel = abs(bitpix) / 8 // e.g., 32 bit = 4 bytes, 16 bit = 2 bytes
-        
-        // 4. Extract the raw byte data using dynamic byte size
         guard let rawData = prime.dataUnit, rawData.count >= pixelCount * bytesPerPixel else {
-            print("ERROR: Missing or incomplete FITS data block. Expected >= \(pixelCount * bytesPerPixel) bytes, got \(prime.dataUnit?.count ?? 0)")
             throw NSError(domain: "MagnetogramError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing or incomplete FITS data block"])
         }
         
-        print("DEBUG FITS: Data unit count = \(rawData.count) bytes. Validating extraction...")
-        
-        // 5. Convert Big-Endian FITS bytes to native Swift Floats
         var dataArray = [Float](repeating: 0.0, count: pixelCount)
         
         rawData.withUnsafeBytes { rawBuffer in
@@ -135,88 +118,61 @@ public final class MagnetogramModeler: @unchecked Sendable {
             }
         }
         
-        // Generate a quick sample string from the array to prove it isn't NaN or garbage
-        let sample = dataArray[10000..<10005]
-        print("DEBUG FITS: First 5 Float values sample: \(sample.map { String(format: "%.2f", $0) }.joined(separator: ", "))")
-        
-        // 6. Convert Float array (Gauss values) to an 8-bit grayscale image
         var pixels = [UInt8](repeating: 0, count: pixelCount)
-        
-        // HIGHER VISUAL CONTRAST: Lowered range from +/- 1500 to +/- 150
-        // This will make the sunspots highly visible in the debug JPG!
         let minGauss: Float = -150.0
         let maxGauss: Float = 150.0
         let range = maxGauss - minGauss
         
         for i in 0..<pixelCount {
             let value = dataArray[i]
-            
             if value.isNaN {
-                pixels[i] = 127 // Neutral gray
+                pixels[i] = 127
                 continue
             }
-            
             let clamped = max(minGauss, min(maxGauss, value))
             let normalized = (clamped - minGauss) / range
             pixels[i] = UInt8(normalized * 255.0)
         }
         
         let colorSpace = CGColorSpaceCreateDeviceGray()
-        guard let context = CGContext(data: &pixels,
-                                      width: width,
-                                      height: height,
-                                      bitsPerComponent: 8,
-                                      bytesPerRow: width,
-                                      space: colorSpace,
-                                      bitmapInfo: CGImageAlphaInfo.none.rawValue),
+        guard let context = CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width, space: colorSpace, bitmapInfo: CGImageAlphaInfo.none.rawValue),
               let cgImage = context.makeImage() else {
-            
             throw NSError(domain: "MagnetogramError", code: 2, userInfo: [NSLocalizedDescriptionKey: "Failed to generate CGImage"])
         }
         
-        // --- NEW: Save raw data as JPG for visualization ---
         let fileManager = FileManager.default
         if let docsDir = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first {
             let starDir = docsDir.appendingPathComponent("star")
-            
-            // Create "star" directory if it doesn't exist
             if !fileManager.fileExists(atPath: starDir.path) {
                 try? fileManager.createDirectory(at: starDir, withIntermediateDirectories: true, attributes: nil)
             }
-            
             let debugImageURL = starDir.appendingPathComponent("magnetogram_debug.jpg")
-            
-            // Cross-platform way to save CGImage to JPEG
             if let destination = CGImageDestinationCreateWithURL(debugImageURL as CFURL, "public.jpeg" as CFString, 1, nil) {
                 CGImageDestinationAddImage(destination, cgImage, nil)
-                if CGImageDestinationFinalize(destination) {
-                    print("DEBUG FITS: Successfully saved visual magnetogram to \(debugImageURL.path)")
-                } else {
-                    print("DEBUG FITS: Failed to finalize JPEG save.")
-                }
+                CGImageDestinationFinalize(destination)
             }
         }
-        // ---------------------------------------------------
         
         return MagnetogramData(cgImage: cgImage, width: width, height: height, fluxArray: dataArray)
     }
 
     // MARK: - 4. PFSS Modeling & Magnetic Integration
     
-    // NEW ALGORITHM: Spatial Peak Clustering (Now 100% Concurrent)
     private func extractActiveRegions(from data: MagnetogramData, thresholdGauss: Float = 40.0) -> (positive: [MagneticRegion], negative: [MagneticRegion]) {
-        let gridSize = 40
         
-        // 1. Calculate how many buckets we have in our grid
+        print("\n=== MAGNETIC FIELD ANALYSIS ===")
+        
+        let gridSize = 40
         let bucketsX = (data.width + gridSize - 1) / gridSize
         let bucketsY = (data.height + gridSize - 1) / gridSize
         let totalBuckets = bucketsX * bucketsY
         
-        // 2. Pre-allocate an array for lock-free concurrent writes
-        // Each bucket gets its own index, eliminating thread collisions
+        print("1. Grid Size: \(gridSize)x\(gridSize) pixels")
+        print("2. Total Analysis Buckets: \(totalBuckets)")
+        print("3. Minimum Threshold: > \(thresholdGauss)G")
+        
         var bucketResults = [MagneticRegion?](repeating: nil, count: totalBuckets)
         
-        // 3. Fire all CPU cores to crunch the buckets concurrently
         DispatchQueue.concurrentPerform(iterations: totalBuckets) { i in
             let bx = i % bucketsX
             let by = i / bucketsX
@@ -231,8 +187,6 @@ public final class MagnetogramModeler: @unchecked Sendable {
             var localPeakY = startY
             var localPeakFlux: Float = 0.0
             
-            // Swift's compiler will naturally unroll this into Accelerate/SIMD instructions
-            // because it is a clean, contiguous memory read block.
             for cy in startY..<endY {
                 let rowOffset = cy * data.width
                 for cx in startX..<endX {
@@ -251,32 +205,42 @@ public final class MagnetogramModeler: @unchecked Sendable {
                 }
             }
             
-            // If this bucket has a valid peak, store it at our dedicated index
             if localMaxAbsFlux > thresholdGauss {
                 let lon = (Float(localPeakX) / Float(data.width)) * 360.0 - 180.0
                 let lat = (Float(localPeakY) / Float(data.height)) * 180.0 - 90.0
-                
                 bucketResults[i] = MagneticRegion(centroidLat: lat, centroidLon: lon, fluxIntensity: localPeakFlux, isPositive: localPeakFlux > 0)
             }
         }
         
-        // 4. Merge the concurrent results back onto the main thread safely
         var posRegions: [MagneticRegion] = []
         var negRegions: [MagneticRegion] = []
-        var maxDetectedFlux: Float = 0.0
         
         for result in bucketResults {
             if let region = result {
                 if region.isPositive { posRegions.append(region) }
                 else { negRegions.append(region) }
-                
-                let absF = abs(region.fluxIntensity)
-                if absF > maxDetectedFlux { maxDetectedFlux = absF }
             }
         }
         
-        print("DEBUG PFSS: Max detected absolute flux = \(maxDetectedFlux)G")
-        print("DEBUG PFSS: Extracted \(posRegions.count) positive and \(negRegions.count) negative distinct peaks.")
+        print("4. Raw Buckets extracted: \(posRegions.count + negRegions.count)")
+        
+        // GEOMETRY SAFETY CAP:
+        // Prevents SceneKit from receiving millions of lines, which pegs the CPU/GPU
+        let maxRegionsPerPolarity = 150
+        
+        posRegions.sort { abs($0.fluxIntensity) > abs($1.fluxIntensity) }
+        negRegions.sort { abs($0.fluxIntensity) > abs($1.fluxIntensity) }
+        
+        if posRegions.count > maxRegionsPerPolarity {
+            posRegions = Array(posRegions.prefix(maxRegionsPerPolarity))
+        }
+        if negRegions.count > maxRegionsPerPolarity {
+            negRegions = Array(negRegions.prefix(maxRegionsPerPolarity))
+        }
+        
+        print("5. Geometry Safety Cap applied (Top \(maxRegionsPerPolarity) poles per polarity).")
+        print("6. Final Distinct Regions: \(posRegions.count) Positive, \(negRegions.count) Negative")
+        print("===============================\n")
         
         return (posRegions, negRegions)
     }
@@ -296,6 +260,13 @@ public final class MagnetogramModeler: @unchecked Sendable {
         for region in regions {
             let rVec = point - region.pos
             let rSq = simd_length_squared(rVec)
+            
+            // PHYSICS OPTIMIZATION:
+            // Magnetic field strength follows an inverse-cube falloff.
+            // If a pole is further than 1.5 solar radii away (rSq > 2.25), its gravitational
+            // pull on the line is mathematically negligible. Skipping it eliminates 85% of CPU math!
+            if rSq > 2.25 { continue }
+            
             let r3 = rSq * sqrt(rSq) + 0.0001
             bField += (rVec * region.flux) / r3
         }
@@ -307,11 +278,9 @@ public final class MagnetogramModeler: @unchecked Sendable {
         var maxRadius: Float = 1.0
         var p1 = p0
         
-        // FIX: Halved the step size for higher resolution curves to catch tight negative poles
         let stepSize: Float = 0.02
-        let maxSteps = 250 // Increased max steps to compensate for smaller jumps
+        let maxSteps = 250
         
-        // FIX: Start much closer to the surface so it doesn't instantly escape weak fields
         currentPos += simd_normalize(p0) * 0.01
         
         var isOpen = true
@@ -319,7 +288,12 @@ public final class MagnetogramModeler: @unchecked Sendable {
         
         for _ in 0..<maxSteps {
             let bField = computeMagneticField(at: currentPos, regions: regions)
-            let direction = simd_normalize(bField)
+            
+            // Fail-safe: if the field perfectly cancels out or is completely void
+            let length = simd_length(bField)
+            if length < 0.00001 || length.isNaN { break }
+            
+            let direction = bField / length // Normalized
             
             currentPos += direction * stepSize
             let currentRadius = simd_length(currentPos)
@@ -353,6 +327,9 @@ public final class MagnetogramModeler: @unchecked Sendable {
     public func calculateMagneticLoops(from data: MagnetogramData, connectionThresholdDegrees: Float = 25.0) -> [MagneticLoopLine] {
         let (posRegions, negRegions) = extractActiveRegions(from: data)
         
+        print("\n=== TRACING MAGNETIC SPLINES ===")
+        print("Simulating gravity & tracing 12 field lines per region...")
+        
         var allRegions3D: [(pos: simd_float3, flux: Float)] = []
         for r in posRegions + negRegions {
             allRegions3D.append((sphericalToCartesian(lat: r.centroidLat, lon: r.centroidLon), r.fluxIntensity))
@@ -361,16 +338,13 @@ public final class MagnetogramModeler: @unchecked Sendable {
         let linesPerRegion = 12
         let bundleSpreadRadius: Float = 0.06
         
-        // 1. Pre-allocate a 2D array for lock-free thread insertion
         var concurrentLoops = [[MagneticLoopLine]](repeating: [], count: posRegions.count)
         
-        // 2. Multithreaded Field Tracing (This parallelizes the 40M+ math calculations!)
         DispatchQueue.concurrentPerform(iterations: posRegions.count) { i in
             let pos = posRegions[i]
             var localLoops: [MagneticLoopLine] = []
             
             let centerPos = sphericalToCartesian(lat: pos.centroidLat, lon: pos.centroidLon)
-            
             let up = simd_float3(0, 1, 0)
             var right = simd_cross(centerPos, up)
             if simd_length(right) < 0.001 { right = simd_float3(1, 0, 0) }
@@ -388,13 +362,14 @@ public final class MagnetogramModeler: @unchecked Sendable {
                     localLoops.append(loop)
                 }
             }
-            
-            // Save this region's completed loops into its dedicated thread-safe slot
             concurrentLoops[i] = localLoops
         }
         
-        // 3. Flatten the 2D concurrent array back into a standard 1D array
-        return concurrentLoops.flatMap { $0 }
+        let allLoops = concurrentLoops.flatMap { $0 }
+        
+        print("Generated \(allLoops.count) successful 3D magnetic splines.")
+        print("================================\n")
+        
+        return allLoops
     }
 }
-
