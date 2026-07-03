@@ -319,8 +319,8 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             float4 midColor  = float4(1.0f, 0.4f, 0.0f, 0.8f);
             float4 baseColor = mix(midColor, coreColor, loopIntensity);
             
-            // 2. Physics: Flow from Positive to Negative using valid u_time
-            float t = fract(offset + (u_time * speed));
+            // 2. Physics: Flow from Positive to Negative using valid scn_frame.time
+            float t = fract(offset + (scn_frame.time * speed));
             
             // 3. GPU Bezier Evaluation (All literals suffixed with 'f')
             float u = 1.0f - t;
@@ -357,7 +357,7 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             float phase = _surface.normal.y;
             
             float alpha = sin(t * 3.14159f);
-            float twinkle = (sin(u_time * 15.0f + phase * 6.28f) * 0.5f) + 0.5f;
+            float twinkle = (sin(scn_frame.time * 15.0f + phase * 6.28f) * 0.5f) + 0.5f;
             
             _surface.transparent.a *= pow(alpha, 1.5f) * (0.4f + 0.6f * twinkle);
             _surface.emission.rgb = _surface.diffuse.rgb * 4.0f;
