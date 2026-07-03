@@ -44,11 +44,8 @@ extension CMEGeometryBuilder {
         var vertexDataArray = [Float](repeating: 0.0, count: totalParticles * 3)
         var normalDataArray = [Float](repeating: 0.0, count: totalParticles * 3)
         var colorDataArray  = [Float](repeating: 0.0, count: totalParticles * 4)
-        
-        // Multi-UV Channels
         var uv0DataArray    = [Float](repeating: 0.0, count: totalParticles * 2)
         var uv1DataArray    = [Float](repeating: 0.0, count: totalParticles * 2)
-        
         var indices         = [Int32](repeating: 0, count: totalParticles)
         
         let pi = Float.pi
@@ -80,8 +77,8 @@ extension CMEGeometryBuilder {
                 let cOffset = pIdx * 4
                 colorDataArray[cOffset] = phases[pIdx]
                 colorDataArray[cOffset + 1] = loopIntensity
-                colorDataArray[cOffset + 2] = 1.0 // Unused but initialized safely
-                colorDataArray[cOffset + 3] = 1.0
+                colorDataArray[cOffset + 2] = 0.0
+                colorDataArray[cOffset + 3] = 1.0 // Alpha 1.0 guarantees texture alpha is preserved
                 
                 let uvOffset = pIdx * 2
                 uv0DataArray[uvOffset] = speeds[pIdx]
@@ -126,11 +123,16 @@ extension CMEGeometryBuilder {
         
         material.setValue(NSNumber(value: solarRadius), forKey: "u_solarRadius")
         
-        // NO VARYINGS! We use safe UVs and pass T down securely via the tangent channel
         material.shaderModifiers = [
             .geometry: """
             #pragma arguments
             float u_solarRadius;
+
+            // Safe, native variables pipeline
+            #pragma varyings
+            float customT;
+            float customPhase;
+            float customLoopIntensity;
 
             #pragma body
             float3 p1 = _geometry.position.xyz; 
@@ -141,6 +143,9 @@ extension CMEGeometryBuilder {
             
             float lat2Norm = _geometry.texcoords[1].x;
             float lon2Norm = _geometry.texcoords[1].y;
+            
+            float phase = _geometry.color.r;
+            float loopIntensity = _geometry.color.g;
             
             float lat2 = (lat2Norm * 3.14159f) - 1.57079f;
             float lon2 = (lon2Norm * 6.28318f) - 3.14159f;
@@ -155,18 +160,24 @@ extension CMEGeometryBuilder {
             
             _geometry.position.xyz = basePos;
             
-            // Pass 't' to Fragment via tangent
-            _geometry.tangent.x = t;
+            // Pass to Fragment via explicit varyings (CRASH FREE)
+            out.customT = t;
+            out.customPhase = phase;
+            out.customLoopIntensity = loopIntensity;
             """,
             
             .fragment: """
+            #pragma varyings
+            float customT;
+            float customPhase;
+            float customLoopIntensity;
+
             #pragma transparent
             #pragma body
             
-            // Unpack everything safely
-            float t = _surface.tangent.x;
-            float phase = _surface.color.r;
-            float loopIntensity = _surface.color.g;
+            float t = in.customT;
+            float phase = in.customPhase;
+            float loopIntensity = in.customLoopIntensity;
 
             float3 coreColor = float3(1.0f, 0.9f, 0.5f);
             float3 midColor  = float3(1.0f, 0.4f, 0.0f);
@@ -214,26 +225,4 @@ extension CMEGeometryBuilder {
         return image
 #endif
     }
-}
-
-extension MagneticLoopLine {
-    func position(at t: Float) -> simd_float3 {
-        let u = 1.0 - t
-        let tt = t * t
-        let uu = u * u
-        
-        let term1 = p0 * uu
-        let term2 = p1 * (2.0 * u * t)
-        let term3 = p2 * tt
-        
-        return term1 + term2 + term3
-    }
-    
-    func tangent(at t: Float) -> simd_float3 {
-        let u = 1.0 - t
-        let dP1 = (p1 - p0) * (2.0 * u)
-        let dP2 = (p2 - p1) * (2.0 * t)
-        return simd_normalize(dP1 + dP2)
-    }
-    
 }
