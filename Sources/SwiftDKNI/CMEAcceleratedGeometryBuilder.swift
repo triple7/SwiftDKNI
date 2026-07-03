@@ -65,7 +65,6 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
 #endif
     }
     
-    // Helper to convert DONKI lat/lon to 3D vector for correlation
     private func sphericalToCartesian(lat: Float, lon: Float, radius: Float = 1.0) -> simd_float3 {
         let latRad = lat * .pi / 180.0
         let lonRad = lon * .pi / 180.0
@@ -77,8 +76,6 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
     }
     
     // MARK: - THE ULTIMATE CORRELATION: DONKI + FITS PFSS
-    /// Filters the FITS magnetic lines using DONKI event data, then builds the volumetric cloud
-    /// governed by those specific magnetic lines, applying space entropy.
     public func buildDONKICorrelatedCMECloud(
         eventLatitude: Float,
         eventLongitude: Float,
@@ -98,28 +95,24 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         let donkiCenter = simd_normalize(sphericalToCartesian(lat: eventLatitude, lon: eventLongitude))
         let halfAngleRad = eventHalfAngle * .pi / 180.0
         
-        // 2. CORRELATION: Find only the FITS open magnetic lines that originate inside the DONKI blast cone
+        // 2. Find only the FITS open magnetic lines that originate inside the DONKI blast cone
         var matchedLines: [MagneticLoopLine] = []
         for line in openLines {
             let rootPos = simd_normalize(line.p0)
-            
-            // Calculate the angle between the DONKI event center and the magnetic root
             let dotProduct = simd_dot(donkiCenter, rootPos)
             let angle = acos(max(-1.0, min(1.0, dotProduct)))
             
-            // If the magnetic root is within the CME's half-angle, it belongs to this explosion!
             if angle <= halfAngleRad {
                 matchedLines.append(line)
             }
         }
         
-        // Fallback: If no FITS lines perfectly match the DONKI area (due to data gaps or weak flux),
-        // find the 3 absolutely closest magnetic lines so the CME still has a physical track to follow.
+        // Fallback: Use closest lines if none are perfectly matched
         if matchedLines.isEmpty {
             let sortedLines = openLines.sorted { a, b in
                 let dotA = simd_dot(donkiCenter, simd_normalize(a.p0))
                 let dotB = simd_dot(donkiCenter, simd_normalize(b.p0))
-                return dotA > dotB // Higher dot product means closer angle
+                return dotA > dotB
             }
             matchedLines = Array(sortedLines.prefix(3))
         }
@@ -127,12 +120,9 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         // 3. Generate the particles using ONLY the correlated magnetic lines
         for _ in 0..<pointCount {
             let line = matchedLines.randomElement()!
-            
-            // Pick a random distance along the line (0.0 = surface, 1.0 = deep space)
             let t = Float.random(in: 0.0...1.0)
-            let centerPos = line.position(at: t)
+            let centerPos = line.position(at: t) * solarRadius
             
-            // THE ENTROPY CALCULATION (Fluid Chaos in the void of space)
             let voidFactor = pow(t, 2.5)
             let entropySpread = (solarRadius * 0.03) + (voidFactor * solarRadius * 2.5)
             
@@ -161,7 +151,6 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             colors.append(color)
         }
         
-        // ... Standard SceneKit Data binding ...
         let vertexData = Data(bytes: vertices, count: vertices.count * MemoryLayout<simd_float3>.size)
         let source = SCNGeometrySource(
             data: vertexData, semantic: .vertex, vectorCount: vertices.count,
@@ -190,13 +179,12 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             bytesPerIndex: MemoryLayout<Int32>.size
         )
         
-        // Massive volumetric point size for the CME gas
         element.pointSize = 12.0
         
         return SCNGeometry(sources: [source, uvSource, colorSource], elements: [element])
     }
     
-    // MARK: - FITS Loop Generator (Intact)
+    // MARK: - Static Magnetic Backbones
     public func buildDataDrivenMagneticLoops(from lines: [MagneticLoopLine], pointsPerLoop: Int = 50) -> SCNGeometry {
         var vertices: [simd_float3] = []
         var indices: [Int32] = []
@@ -206,7 +194,6 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         var currentIndex: Int32 = 0
         
         for line in lines {
-            // Skip open lines here so we don't draw strict 1D lines where the CME clouds go
             guard !line.isOpen else { continue }
             
             let phase = Float.random(in: 0.0...1.0)
@@ -216,15 +203,12 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
                 vertices.append(line.position(at: t))
                 texcoords.append(simd_float2(t, phase))
                 
-                let coreColor = simd_float4(1.0, 1.0, 1.0, 0.9)
-                let midColor  = simd_float4(1.0, 0.7, 0.1, 0.6)
-                let redColor  = simd_float4(0.8, 0.1, 0.0, 0.3)
+                // Very faint backing lines to serve as the track
+                let coreColor = simd_float4(1.0, 0.7, 0.4, 0.15)
+                let edgeColor = simd_float4(0.8, 0.2, 0.0, 0.05)
                 
                 let apexness = 1.0 - (abs(t - 0.5) * 2.0)
-                let loopIntensity = min(1.0, abs(line.intensity) / 1000.0)
-                let rootColor = mixColor(midColor, coreColor, factor: loopIntensity)
-                
-                colors.append(mixColor(rootColor, redColor, factor: apexness))
+                colors.append(mixColor(edgeColor, coreColor, factor: apexness))
                 
                 if i > 0 {
                     indices.append(currentIndex - 1)
@@ -235,54 +219,151 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         }
         
         let vertexData = Data(bytes: vertices, count: vertices.count * MemoryLayout<simd_float3>.size)
-        let source = SCNGeometrySource(
-            data: vertexData, semantic: .vertex, vectorCount: vertices.count,
-            usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size,
-            dataOffset: 0, dataStride: MemoryLayout<simd_float3>.size
-        )
-        
+        let source = SCNGeometrySource(data: vertexData, semantic: .vertex, vectorCount: vertices.count, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<simd_float3>.size)
         let uvData = Data(bytes: texcoords, count: texcoords.count * MemoryLayout<simd_float2>.size)
-        let uvSource = SCNGeometrySource(
-            data: uvData, semantic: .texcoord, vectorCount: texcoords.count,
-            usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size,
-            dataOffset: 0, dataStride: MemoryLayout<simd_float2>.size
-        )
-        
+        let uvSource = SCNGeometrySource(data: uvData, semantic: .texcoord, vectorCount: texcoords.count, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<simd_float2>.size)
         let colorData = Data(bytes: colors, count: colors.count * MemoryLayout<simd_float4>.size)
-        let colorSource = SCNGeometrySource(
-            data: colorData, semantic: .color, vectorCount: colors.count,
-            usesFloatComponents: true, componentsPerVector: 4, bytesPerComponent: MemoryLayout<Float>.size,
-            dataOffset: 0, dataStride: MemoryLayout<simd_float4>.size
-        )
+        let colorSource = SCNGeometrySource(data: colorData, semantic: .color, vectorCount: colors.count, usesFloatComponents: true, componentsPerVector: 4, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<simd_float4>.size)
         
         let indexData = Data(bytes: indices, count: indices.count * MemoryLayout<Int32>.size)
-        let element = SCNGeometryElement(
-            data: indexData, primitiveType: .line, primitiveCount: indices.count / 2,
-            bytesPerIndex: MemoryLayout<Int32>.size
-        )
+        let element = SCNGeometryElement(data: indexData, primitiveType: .line, primitiveCount: indices.count / 2, bytesPerIndex: MemoryLayout<Int32>.size)
         
         return SCNGeometry(sources: [source, uvSource, colorSource], elements: [element])
     }
     
-    // ... [existing createCoronalSurface function intact] ...
-    public func createCoronalSurface(from lines: [MagneticLoopLine]) -> SCNNode {
-        let geometry = buildDataDrivenMagneticLoops(from: lines)
+    // MARK: - Dynamic GPU-Evaluated Energy Tunnels
+    /// Packs Bezier control points and metadata into custom semantics, which are entirely animated on the GPU!
+    private func buildEnergyTunnels(from lines: [MagneticLoopLine], particlesPerLine: Int = 20) -> SCNNode {
+        var vertexDataArray: [Float] = []
+        var normalDataArray: [Float] = []
+        var tangentDataArray: [Float] = []
+        var uvDataArray: [Float] = []
+        var colorDataArray: [Float] = []
+        var indices: [Int32] = []
+        
+        var currentIndex: Int32 = 0
+        
+        for line in lines {
+            guard !line.isOpen else { continue }
+            
+            let loopIntensity = min(1.0, abs(line.intensity) / 1000.0)
+            
+            let coreColor = simd_float4(1.0, 0.9, 0.5, 1.0)
+            let midColor  = simd_float4(1.0, 0.4, 0.0, 0.8)
+            let baseColor = mixColor(midColor, coreColor, factor: loopIntensity)
+            
+            for _ in 0..<particlesPerLine {
+                let offset = Float.random(in: 0.0...1.0)
+                let speed = Float.random(in: 0.05...0.25) // Speed variable from pos to neg
+                let phase = Float.random(in: 0.0...1.0)   // Rotational position around the spline
+                
+                // Pack standard SceneKit Semantics as Custom Math Payloads
+                // .vertex = initial position (needed for frustum culling bound box)
+                vertexDataArray.append(contentsOf: [line.p1.x, line.p1.y, line.p1.z])
+                // .normal = Root 1 (p0)
+                normalDataArray.append(contentsOf: [line.p0.x, line.p0.y, line.p0.z])
+                // .tangent = Root 2 (p2) + time offset
+                tangentDataArray.append(contentsOf: [line.p2.x, line.p2.y, line.p2.z, offset])
+                // .texcoord = speed and rotation phase
+                uvDataArray.append(contentsOf: [speed, phase])
+                // .color = brightness
+                colorDataArray.append(contentsOf: [baseColor.x, baseColor.y, baseColor.z, baseColor.w])
+                
+                indices.append(currentIndex)
+                currentIndex += 1
+            }
+        }
+        
+        let vertexData = Data(bytes: vertexDataArray, count: vertexDataArray.count * MemoryLayout<Float>.size)
+        let vertexSource = SCNGeometrySource(data: vertexData, semantic: .vertex, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
+
+        let normalData = Data(bytes: normalDataArray, count: normalDataArray.count * MemoryLayout<Float>.size)
+        let normalSource = SCNGeometrySource(data: normalData, semantic: .normal, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
+
+        let tangentData = Data(bytes: tangentDataArray, count: tangentDataArray.count * MemoryLayout<Float>.size)
+        let tangentSource = SCNGeometrySource(data: tangentData, semantic: .tangent, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 4, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 4)
+
+        let uvData = Data(bytes: uvDataArray, count: uvDataArray.count * MemoryLayout<Float>.size)
+        let uvSource = SCNGeometrySource(data: uvData, semantic: .texcoord, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
+
+        let colorData = Data(bytes: colorDataArray, count: colorDataArray.count * MemoryLayout<Float>.size)
+        let colorSource = SCNGeometrySource(data: colorData, semantic: .color, vectorCount: indices.count, usesFloatComponents: true, componentsPerVector: 4, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 4)
+
+        let indexData = Data(bytes: indices, count: indices.count * MemoryLayout<Int32>.size)
+        let element = SCNGeometryElement(data: indexData, primitiveType: .point, primitiveCount: indices.count, bytesPerIndex: MemoryLayout<Int32>.size)
+        
+        // Thicker particles for energy plasma look
+        element.pointSize = 5.0
+        element.minimumPointScreenSpaceRadius = 1.0
+        element.maximumPointScreenSpaceRadius = 15.0
+        
+        let geometry = SCNGeometry(sources: [vertexSource, normalSource, tangentSource, uvSource, colorSource], elements: [element])
+        
         let material = SCNMaterial()
-        material.isDoubleSided = true
+        material.lightingModel = .constant
         material.blendMode = .add
         material.writesToDepthBuffer = false
         material.readsFromDepthBuffer = true
         material.diffuse.contents = createSoftGlowTexture()
         
         material.shaderModifiers = [
-            .surface: """
-            #pragma arguments
-            float time;
+            .geometry: """
             #pragma body
-            float phase = _surface.diffuseTexcoord.y;
-            float t = _surface.diffuseTexcoord.x;
-            float pulse = (sin((t * 10.0) - (scn_frame.time * 5.0) + (phase * 6.28)) * 0.5) + 0.5;
-            _surface.emission.rgb = _surface.diffuse.rgb * (pulse + 0.5) * 1.5;
+            // 1. Unpack our custom attributes from standard semantics
+            float3 p1 = _geometry.position.xyz; 
+            float3 p0 = _geometry.normal;       
+            float3 p2 = _geometry.tangent.xyz;  
+            float offset = _geometry.tangent.w; 
+            float speed = _geometry.texcoords[0].x; 
+            float phase = _geometry.texcoords[0].y; 
+            
+            // 2. Physics: Particles flow from Positive (t=0) to Negative (t=1)
+            float t = fract(offset + (scn_frame.time * speed));
+            
+            // 3. GPU Bezier Evaluation
+            float u = 1.0 - t;
+            float tt = t * t;
+            float uu = u * u;
+            float3 basePos = (p0 * uu) + (p1 * (2.0 * u * t)) + (p2 * tt);
+            
+            // 4. Volumetric Tube Expansion (Fatter at the top, pinches at the root)
+            float angle = phase * 6.28318;
+            float radius = 0.02 * sin(t * 3.14159);
+            
+            // Calculate Tangent vector to generate a perpendicular tube offset
+            float3 dP = normalize(2.0 * u * (p1 - p0) + 2.0 * t * (p2 - p1));
+            float3 upDir = float3(0.0, 1.0, 0.0);
+            float3 rightDir = cross(dP, upDir);
+            if (length(rightDir) < 0.001) { rightDir = float3(1.0, 0.0, 0.0); }
+            rightDir = normalize(rightDir);
+            float3 localUp = normalize(cross(rightDir, dP));
+            
+            float3 tunnelOffset = (rightDir * cos(angle) + localUp * sin(angle)) * radius;
+            
+            // 5. Output Final GPU Position
+            _geometry.position.xyz = basePos + tunnelOffset;
+            
+            // Pass 't' and 'phase' forward to the fragment shader via the normal varying
+            _geometry.normal.x = t;
+            _geometry.normal.y = phase;
+            """,
+            
+            .fragment: """
+            #pragma transparent
+            #pragma body
+            float t = _surface.normal.x;
+            float phase = _surface.normal.y;
+            
+            // Softly fade the particles into existence at the root, and fade out at the destination
+            float alpha = sin(t * 3.14159);
+            
+            // Twinkle effect based on particle phase
+            float twinkle = (sin(scn_frame.time * 15.0 + phase * 6.28) * 0.5) + 0.5;
+            
+            _surface.transparent.a *= pow(alpha, 1.5) * (0.4 + 0.6 * twinkle);
+            
+            // HDR Overblow for intense brightness
+            _surface.emission.rgb = _surface.diffuse.rgb * 4.0;
             """
         ]
         
@@ -291,10 +372,32 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         node.categoryBitMask = 2
         return node
     }
+    
+    // MARK: - SceneKit Master Node
+    public func createCoronalSurface(from lines: [MagneticLoopLine]) -> SCNNode {
+        let masterNode = SCNNode()
+        
+        // 1. The Faint Static Backbones
+        let baseLoopsNode = SCNNode(geometry: buildDataDrivenMagneticLoops(from: lines))
+        let baseMaterial = SCNMaterial()
+        baseMaterial.isDoubleSided = true
+        baseMaterial.blendMode = .add
+        baseMaterial.writesToDepthBuffer = false
+        baseMaterial.readsFromDepthBuffer = true
+        baseLoopsNode.geometry?.materials = [baseMaterial]
+        baseLoopsNode.categoryBitMask = 2
+        
+        // 2. The GPU Accelerated Particle Tunnels
+        let energyTunnelsNode = buildEnergyTunnels(from: lines, particlesPerLine: 20)
+        
+        masterNode.addChildNode(baseLoopsNode)
+        masterNode.addChildNode(energyTunnelsNode)
+        
+        return masterNode
+    }
 }
 
 fileprivate func mixColor(_ a: simd_float4, _ b: simd_float4, factor: Float) -> simd_float4 {
     let f = max(0.0, min(1.0, factor))
     return a + (b - a) * f
 }
-
