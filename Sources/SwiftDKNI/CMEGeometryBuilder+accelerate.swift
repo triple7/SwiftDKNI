@@ -41,16 +41,31 @@ extension CMEGeometryBuilder {
         let speeds  = generateAcceleratedRandoms(count: totalParticles, min: 0.05, max: 0.25)
         let phases  = generateAcceleratedRandoms(count: totalParticles, min: 0.0, max: 1.0)
         
-        var vertexDataArray = [Float](repeating: 0.0, count: totalParticles * 3)
-        var normalDataArray = [Float](repeating: 0.0, count: totalParticles * 3)
-        var colorDataArray  = [Float](repeating: 0.0, count: totalParticles * 4)
-        var uv0DataArray    = [Float](repeating: 0.0, count: totalParticles * 2)
-        var uv1DataArray    = [Float](repeating: 0.0, count: totalParticles * 2)
-        var indices         = [Int32](repeating: 0, count: totalParticles)
+        // 4 Vertices per particle
+        let totalVertices = totalParticles * 4
+        var vertexDataArray = [Float](repeating: 0.0, count: totalVertices * 3)
+        var normalDataArray = [Float](repeating: 0.0, count: totalVertices * 3)
+        
+        var uv0DataArray    = [Float](repeating: 0.0, count: totalVertices * 2) // Base Quad UVs
+        var uv1DataArray    = [Float](repeating: 0.0, count: totalVertices * 2) // Speed & Offset
+        var uv2DataArray    = [Float](repeating: 0.0, count: totalVertices * 2) // Phase & Intensity
+        var tangentDataArray = [Float](repeating: 0.0, count: totalVertices * 4) // Lat, Lon, Quad X/Y
+        
+        var indices = [UInt32](repeating: 0, count: totalParticles * 6) // 2 Triangles per particle
         
         let pi = Float.pi
         let twoPi = Float.pi * 2.0
         var pIdx = 0
+        
+        // Base Quad offsets and UVs
+        let quadOffsets: [simd_float2] = [
+            simd_float2(-1, -1), simd_float2(1, -1),
+            simd_float2(-1,  1), simd_float2(1,  1)
+        ]
+        let quadUVs: [simd_float2] = [
+            simd_float2(0, 0), simd_float2(1, 0),
+            simd_float2(0, 1), simd_float2(1, 1)
+        ]
         
         for line in validLines {
             let p1 = line.p1 * solarRadius
@@ -65,87 +80,106 @@ extension CMEGeometryBuilder {
             let loopIntensity = min(1.0, abs(line.intensity) / 1000.0)
             
             for _ in 0..<particlesPerLine {
-                let vOffset = pIdx * 3
-                vertexDataArray[vOffset] = p1.x
-                vertexDataArray[vOffset + 1] = p1.y
-                vertexDataArray[vOffset + 2] = p1.z
+                let speed = speeds[pIdx]
+                let offset = offsets[pIdx]
+                let phase = phases[pIdx]
                 
-                normalDataArray[vOffset] = p0Norm.x
-                normalDataArray[vOffset + 1] = p0Norm.y
-                normalDataArray[vOffset + 2] = p0Norm.z
+                // Construct 4 vertices for each particle quad
+                for j in 0..<4 {
+                    let vIdx = (pIdx * 4) + j
+                    
+                    let vOffset3 = vIdx * 3
+                    vertexDataArray[vOffset3] = p1.x
+                    vertexDataArray[vOffset3 + 1] = p1.y
+                    vertexDataArray[vOffset3 + 2] = p1.z
+                    
+                    normalDataArray[vOffset3] = p0Norm.x
+                    normalDataArray[vOffset3 + 1] = p0Norm.y
+                    normalDataArray[vOffset3 + 2] = p0Norm.z
+                    
+                    let vOffset2 = vIdx * 2
+                    uv0DataArray[vOffset2] = quadUVs[j].x
+                    uv0DataArray[vOffset2 + 1] = quadUVs[j].y
+                    
+                    uv1DataArray[vOffset2] = speed
+                    uv1DataArray[vOffset2 + 1] = offset
+                    
+                    uv2DataArray[vOffset2] = phase
+                    uv2DataArray[vOffset2 + 1] = loopIntensity
+                    
+                    let vOffset4 = vIdx * 4
+                    tangentDataArray[vOffset4] = lat2Norm
+                    tangentDataArray[vOffset4 + 1] = lon2Norm
+                    tangentDataArray[vOffset4 + 2] = quadOffsets[j].x
+                    tangentDataArray[vOffset4 + 3] = quadOffsets[j].y
+                }
                 
-                let cOffset = pIdx * 4
-                colorDataArray[cOffset] = phases[pIdx]
-                colorDataArray[cOffset + 1] = loopIntensity
-                colorDataArray[cOffset + 2] = 0.0
-                colorDataArray[cOffset + 3] = 1.0 // Alpha 1.0 guarantees texture alpha is preserved
+                // Add standard CCW Triangles for the quad
+                let iIdx = pIdx * 6
+                let baseV = UInt32(pIdx * 4)
+                indices[iIdx] = baseV
+                indices[iIdx + 1] = baseV + 1
+                indices[iIdx + 2] = baseV + 2
                 
-                let uvOffset = pIdx * 2
-                uv0DataArray[uvOffset] = speeds[pIdx]
-                uv0DataArray[uvOffset + 1] = offsets[pIdx]
+                indices[iIdx + 3] = baseV + 1
+                indices[iIdx + 4] = baseV + 3
+                indices[iIdx + 5] = baseV + 2
                 
-                uv1DataArray[uvOffset] = lat2Norm
-                uv1DataArray[uvOffset + 1] = lon2Norm
-                
-                indices[pIdx] = Int32(pIdx)
                 pIdx += 1
             }
         }
         
         let vertexData = Data(bytes: vertexDataArray, count: vertexDataArray.count * MemoryLayout<Float>.size)
-        let vertexSource = SCNGeometrySource(data: vertexData, semantic: .vertex, vectorCount: totalParticles, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
+        let vertexSource = SCNGeometrySource(data: vertexData, semantic: .vertex, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
 
         let normalData = Data(bytes: normalDataArray, count: normalDataArray.count * MemoryLayout<Float>.size)
-        let normalSource = SCNGeometrySource(data: normalData, semantic: .normal, vectorCount: totalParticles, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
-
-        let colorData = Data(bytes: colorDataArray, count: colorDataArray.count * MemoryLayout<Float>.size)
-        let colorSource = SCNGeometrySource(data: colorData, semantic: .color, vectorCount: totalParticles, usesFloatComponents: true, componentsPerVector: 4, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 4)
+        let normalSource = SCNGeometrySource(data: normalData, semantic: .normal, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
 
         let uv0Data = Data(bytes: uv0DataArray, count: uv0DataArray.count * MemoryLayout<Float>.size)
-        let uv0Source = SCNGeometrySource(data: uv0Data, semantic: .texcoord, vectorCount: totalParticles, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
+        let uv0Source = SCNGeometrySource(data: uv0Data, semantic: .texcoord, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
 
         let uv1Data = Data(bytes: uv1DataArray, count: uv1DataArray.count * MemoryLayout<Float>.size)
-        let uv1Source = SCNGeometrySource(data: uv1Data, semantic: .texcoord, vectorCount: totalParticles, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
+        let uv1Source = SCNGeometrySource(data: uv1Data, semantic: .texcoord, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
 
-        let element = SCNGeometryElement(data: Data(bytes: indices, count: indices.count * MemoryLayout<Int32>.size), primitiveType: .point, primitiveCount: totalParticles, bytesPerIndex: MemoryLayout<Int32>.size)
-        element.pointSize = 5.0
-        element.minimumPointScreenSpaceRadius = 1.0
-        element.maximumPointScreenSpaceRadius = 15.0
+        let uv2Data = Data(bytes: uv2DataArray, count: uv2DataArray.count * MemoryLayout<Float>.size)
+        let uv2Source = SCNGeometrySource(data: uv2Data, semantic: .texcoord, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
+        
+        let tangentData = Data(bytes: tangentDataArray, count: tangentDataArray.count * MemoryLayout<Float>.size)
+        let tangentSource = SCNGeometrySource(data: tangentData, semantic: .tangent, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 4, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 4)
 
-        let geometry = SCNGeometry(sources: [vertexSource, normalSource, colorSource, uv0Source, uv1Source], elements: [element])
+        let element = SCNGeometryElement(data: Data(bytes: indices, count: indices.count * MemoryLayout<UInt32>.size), primitiveType: .triangles, primitiveCount: totalParticles * 2, bytesPerIndex: MemoryLayout<UInt32>.size)
+
+        let geometry = SCNGeometry(sources: [vertexSource, normalSource, uv0Source, uv1Source, uv2Source, tangentSource], elements: [element])
         
         let material = SCNMaterial()
         material.lightingModel = .constant
         material.blendMode = .add
         material.writesToDepthBuffer = false
         material.readsFromDepthBuffer = true
-        material.diffuse.contents = generateAcceleratedGlowTexture()
+        material.isDoubleSided = true
         
         material.setValue(NSNumber(value: solarRadius), forKey: "u_solarRadius")
         
+        // Native mapping ensures no Shader compilation crashes.
+        // texcoords[0] -> diffuseTexcoord
+        // texcoords[1] -> ambientTexcoord
+        // texcoords[2] -> specularTexcoord
         material.shaderModifiers = [
             .geometry: """
             #pragma arguments
             float u_solarRadius;
 
-            // Safe, native variables pipeline
-            #pragma varyings
-            float customT;
-            float customPhase;
-            float customLoopIntensity;
-
             #pragma body
             float3 p1 = _geometry.position.xyz; 
             float3 p0 = _geometry.normal * u_solarRadius;
             
-            float speed = _geometry.texcoords[0].x;
-            float offset = _geometry.texcoords[0].y;
+            float speed = _geometry.texcoords[1].x;
+            float offset = _geometry.texcoords[1].y;
             
-            float lat2Norm = _geometry.texcoords[1].x;
-            float lon2Norm = _geometry.texcoords[1].y;
-            
-            float phase = _geometry.color.r;
-            float loopIntensity = _geometry.color.g;
+            float lat2Norm = _geometry.tangent.x;
+            float lon2Norm = _geometry.tangent.y;
+            float quadX = _geometry.tangent.z;
+            float quadY = _geometry.tangent.w;
             
             float lat2 = (lat2Norm * 3.14159f) - 1.57079f;
             float lon2 = (lon2Norm * 6.28318f) - 3.14159f;
@@ -158,36 +192,45 @@ extension CMEGeometryBuilder {
             float uu = u * u;
             float3 basePos = (p0 * uu) + (p1 * (2.0f * u * t)) + (p2 * tt);
             
-            _geometry.position.xyz = basePos;
+            // Extract camera-facing billboard vectors
+            float3 camRight = scn_node.inverseModelViewTransform[0].xyz;
+            float3 camUp    = scn_node.inverseModelViewTransform[1].xyz;
             
-            // Pass to Fragment via explicit varyings (CRASH FREE)
-            out.customT = t;
-            out.customPhase = phase;
-            out.customLoopIntensity = loopIntensity;
+            // Particle pulsing size effect based on time
+            float particleSize = (0.012f + (sin(t * 3.14159f) * 0.012f)) * u_solarRadius;
+            float3 localOffset = (camRight * quadX + camUp * quadY) * particleSize;
+            
+            // Final Quad projection
+            _geometry.position.xyz = basePos + localOffset;
+            
+            // Inject 't' into the unused speed channel to pass to the fragment shader safely
+            _geometry.texcoords[1].x = t;
             """,
             
             .fragment: """
-            #pragma varyings
-            float customT;
-            float customPhase;
-            float customLoopIntensity;
-
             #pragma transparent
             #pragma body
             
-            float t = in.customT;
-            float phase = in.customPhase;
-            float loopIntensity = in.customLoopIntensity;
+            // Extract our physics payload natively
+            float2 uv = _surface.diffuseTexcoord;
+            float t = _surface.ambientTexcoord.x;
+            float phase = _surface.specularTexcoord.x;
+            float loopIntensity = _surface.specularTexcoord.y;
+
+            // Mathematical Plasma Circle using UV distance
+            float dist = distance(uv, float2(0.5f, 0.5f));
+            if (dist > 0.5f) discard;
 
             float3 coreColor = float3(1.0f, 0.9f, 0.5f);
             float3 midColor  = float3(1.0f, 0.4f, 0.0f);
             float3 baseColor = mix(midColor, coreColor, loopIntensity);
 
-            float alpha = sin(t * 3.14159f);
+            // Calculate soft, glowing falloff
+            float alpha = smoothstep(0.5f, 0.0f, dist) * sin(t * 3.14159f);
             float twinkle = (sin(scn_frame.time * 15.0f + phase * 6.28318f) * 0.5f) + 0.5f;
             
-            _surface.emission.rgb = baseColor * 4.0f;
-            _surface.transparent.a = _surface.diffuse.a * pow(alpha, 1.5f) * (0.4f + 0.6f * twinkle);
+            _surface.emission.rgb = baseColor * 6.0f;
+            _surface.transparent.a = alpha * pow(alpha, 1.5f) * (0.4f + 0.6f * twinkle);
             """
         ]
         
@@ -196,33 +239,5 @@ extension CMEGeometryBuilder {
         let node = SCNNode(geometry: geometry)
         node.categoryBitMask = 2
         return node
-    }
-    
-    private func generateAcceleratedGlowTexture() -> XImage {
-        let size = CGSize(width: 64, height: 64)
-#if os(macOS)
-        let image = NSImage(size: size)
-        image.lockFocus()
-        let context = NSGraphicsContext.current!.cgContext
-#else
-        UIGraphicsBeginImageContextWithOptions(size, false, 0)
-        let context = UIGraphicsGetCurrentContext()!
-#endif
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
-        let colors = [
-            CGColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 1.0),
-            CGColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 0.0)
-        ] as CFArray
-        let gradient = CGGradient(colorsSpace: colorSpace, colors: colors, locations: [0.0, 1.0])!
-        let center = CGPoint(x: size.width / 2, y: size.height / 2)
-        context.drawRadialGradient(gradient, startCenter: center, startRadius: 0, endCenter: center, endRadius: size.width / 2, options: [])
-#if os(macOS)
-        image.unlockFocus()
-        return image
-#else
-        let image = UIGraphicsGetImageFromCurrentImageContext()!
-        UIGraphicsEndImageContext()
-        return image
-#endif
     }
 }
