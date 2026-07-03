@@ -141,8 +141,11 @@ public final class MagnetogramModeler: @unchecked Sendable {
         
         // 6. Convert Float array (Gauss values) to an 8-bit grayscale image
         var pixels = [UInt8](repeating: 0, count: pixelCount)
-        let minGauss: Float = -1500.0
-        let maxGauss: Float = 1500.0
+        
+        // HIGHER VISUAL CONTRAST: Lowered range from +/- 1500 to +/- 150
+        // This will make the sunspots highly visible in the debug JPG!
+        let minGauss: Float = -150.0
+        let maxGauss: Float = 150.0
         let range = maxGauss - minGauss
         
         for i in 0..<pixelCount {
@@ -200,17 +203,24 @@ public final class MagnetogramModeler: @unchecked Sendable {
 
     // MARK: - 4. PFSS Modeling & Magnetic Integration
     
-    // LOWERED THRESHOLD: Synoptic maps dilute peak flux via averaging. 500G is often too high.
-    private func extractActiveRegions(from data: MagnetogramData, thresholdGauss: Float = 150.0) -> (positive: [MagneticRegion], negative: [MagneticRegion]) {
+    // LOWERED THRESHOLD: Synoptic maps dilute peak flux via averaging.
+    // We lowered the detection threshold drastically to 25.0 Gauss to ensure region capture.
+    private func extractActiveRegions(from data: MagnetogramData, thresholdGauss: Float = 25.0) -> (positive: [MagneticRegion], negative: [MagneticRegion]) {
         var posRegions: [MagneticRegion] = []
         var negRegions: [MagneticRegion] = []
         
         let strideStep = 10
+        var maxDetectedFlux: Float = 0.0
         
         for y in stride(from: 0, to: data.height, by: strideStep) {
             for x in stride(from: 0, to: data.width, by: strideStep) {
                 let index = y * data.width + x
                 let flux = data.fluxArray[index]
+                
+                // Track the absolute maximum flux to help debug our thresholds
+                if !flux.isNaN && abs(flux) > maxDetectedFlux {
+                    maxDetectedFlux = abs(flux)
+                }
                 
                 if abs(flux) > thresholdGauss {
                     let lon = (Float(x) / Float(data.width)) * 360.0 - 180.0
@@ -225,6 +235,9 @@ public final class MagnetogramModeler: @unchecked Sendable {
                 }
             }
         }
+        
+        print("DEBUG PFSS: Max detected absolute flux in stride = \(maxDetectedFlux)G")
+        print("DEBUG PFSS: Extracted \(posRegions.count) positive and \(negRegions.count) negative regions.")
         
         return (posRegions, negRegions)
     }
@@ -337,3 +350,4 @@ public final class MagnetogramModeler: @unchecked Sendable {
         return loops
     }
 }
+
