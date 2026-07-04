@@ -312,57 +312,75 @@ public final class MagnetogramModeler: @unchecked Sendable {
         return bField
     }
     
-    private func traceFieldLine(startPoint p0: simd_float3, regions: [(pos: simd_float3, flux: Float)], intensity: Float) -> MagneticLoopLine {
-        var currentPos = p0
-        var maxRadius: Float = 1.0
-        var p1 = p0
-        
-        let stepSize: Float = 0.02
-        let maxSteps = 250
-        
-        currentPos += simd_normalize(p0) * 0.01
-        
-        var isOpen = true
-        var p2 = p0
-        
-        for _ in 0..<maxSteps {
-            let bField = computeMagneticField(at: currentPos, regions: regions)
+    private func traceFieldLine(startPoint p0: simd_float3, regions: [(pos: simd_float3, flux: Float)], intensity: Float, twist: simd_float2) -> MagneticLoopLine {
+            var currentPos = p0
+            var maxRadius: Float = 1.0
+            var p1 = p0
             
-            // Fail-safe: if the field perfectly cancels out or is completely void
-            let length = simd_length(bField)
-            if length < 0.00001 || length.isNaN { break }
+            let stepSize: Float = 0.02
+            let maxSteps = 250
             
-            let direction = bField / length // Normalized
+            currentPos += simd_normalize(p0) * 0.01
             
-            currentPos += direction * stepSize
-            let currentRadius = simd_length(currentPos)
+            var isOpen = true
+            var p2 = p0
             
-            if currentRadius > maxRadius {
-                maxRadius = currentRadius
-                p1 = currentPos
+            for _ in 0..<maxSteps {
+                let bField = computeMagneticField(at: currentPos, regions: regions)
+                
+                // Fail-safe: if the field perfectly cancels out or is completely void
+                let length = simd_length(bField)
+                if length < 0.00001 || length.isNaN { break }
+                
+                let direction = bField / length // Normalized
+                
+                currentPos += direction * stepSize
+                let currentRadius = simd_length(currentPos)
+                
+                if currentRadius > maxRadius {
+                    maxRadius = currentRadius
+                    p1 = currentPos
+                }
+                
+                if currentRadius <= 1.0 {
+                    isOpen = false
+                    p2 = simd_normalize(currentPos)
+                    break
+                }
+                
+                if currentRadius > 6.0 {
+                    isOpen = true
+                    p2 = currentPos
+                    break
+                }
             }
             
-            if currentRadius <= 1.0 {
-                isOpen = false
-                p2 = simd_normalize(currentPos)
-                break
-            }
-            
-            if currentRadius > 6.0 {
-                isOpen = true
+            if isOpen && simd_length(currentPos) <= 3.0 {
                 p2 = currentPos
-                break
+                p1 = p0 + (simd_normalize(p0) * 1.5)
+                maxRadius = simd_length(p1) // Update maxRadius so the twist scales correctly
             }
+            
+            // --- APPLY REGIONAL HELICITY (TWIST) TO THE APEX (P1) ---
+            // 1. Calculate the local lateral plane at the apex
+            let p1Norm = simd_normalize(p1)
+            let up = simd_float3(0, 1, 0)
+            var tangent = simd_cross(p1Norm, up)
+            
+            if simd_length(tangent) < 0.001 { tangent = simd_float3(1, 0, 0) }
+            tangent = simd_normalize(tangent)
+            
+            let binormal = simd_normalize(simd_cross(tangent, p1Norm))
+            
+            // 2. Scale the lean strength by maxRadius so larger loops twist proportionally more
+            let leanStrength: Float = 0.15 * maxRadius
+            let directionalOffset = (tangent * twist.x + binormal * twist.y) * leanStrength
+            
+            // 3. Shift the apex to create the physical magnetic helicity
+            p1 += directionalOffset
+            
+            return MagneticLoopLine(p0: p0, p1: p1, p2: p2, isOpen: isOpen, intensity: intensity)
         }
-        
-        if isOpen && simd_length(currentPos) <= 3.0 {
-            p2 = currentPos
-            p1 = p0 + (simd_normalize(p0) * 1.5)
-        }
-        
-        return MagneticLoopLine(p0: p0, p1: p1, p2: p2, isOpen: isOpen, intensity: intensity)
-    }
-    
     public func calculateMagneticLoops(from data: MagnetogramData, connectionThresholdDegrees: Float = 25.0) -> [MagneticLoopLine] {
         // 1. Unpack the new regional twists dictionary
         let (posRegions, negRegions, regionalTwists) = extractActiveRegions(from: data)
