@@ -320,6 +320,7 @@ public final class MagnetogramModeler: @unchecked Sendable {
             let stepSize: Float = 0.02
             let maxSteps = 250
             
+            // Push slightly outwards to start
             currentPos += simd_normalize(p0) * 0.01
             
             var isOpen = true
@@ -328,11 +329,10 @@ public final class MagnetogramModeler: @unchecked Sendable {
             for _ in 0..<maxSteps {
                 let bField = computeMagneticField(at: currentPos, regions: regions)
                 
-                // Fail-safe: if the field perfectly cancels out or is completely void
                 let length = simd_length(bField)
                 if length < 0.00001 || length.isNaN { break }
                 
-                let direction = bField / length // Normalized
+                let direction = bField / length
                 
                 currentPos += direction * stepSize
                 let currentRadius = simd_length(currentPos)
@@ -358,12 +358,13 @@ public final class MagnetogramModeler: @unchecked Sendable {
             if isOpen && simd_length(currentPos) <= 3.0 {
                 p2 = currentPos
                 p1 = p0 + (simd_normalize(p0) * 1.5)
-                maxRadius = simd_length(p1) // Update maxRadius so the twist scales correctly
+                maxRadius = simd_length(p1)
             }
             
             // --- APPLY REGIONAL HELICITY (TWIST) TO THE APEX (P1) ---
-            // 1. Calculate the local lateral plane at the apex
-            let p1Norm = simd_normalize(p1)
+            var p1Norm = simd_normalize(p1)
+            if p1Norm.x.isNaN { p1Norm = simd_normalize(p0) } // Safety catch
+            
             let up = simd_float3(0, 1, 0)
             var tangent = simd_cross(p1Norm, up)
             
@@ -372,15 +373,28 @@ public final class MagnetogramModeler: @unchecked Sendable {
             
             let binormal = simd_normalize(simd_cross(tangent, p1Norm))
             
-            // 2. Scale the lean strength by maxRadius so larger loops twist proportionally more
             let leanStrength: Float = 0.15 * maxRadius
-            let directionalOffset = (tangent * twist.x + binormal * twist.y) * leanStrength
             
-            // 3. Shift the apex to create the physical magnetic helicity
+            // Protect against NaN in twist vector
+            let safeTwistX = twist.x.isNaN ? 0.0 : twist.x
+            let safeTwistY = twist.y.isNaN ? 0.0 : twist.y
+            
+            let directionalOffset = (tangent * safeTwistX + binormal * safeTwistY) * leanStrength
             p1 += directionalOffset
+            
+            // --- ANTI-NAN GEOMETRY FAIL-SAFE ---
+            // Force minimum spatial separation to guarantee the Metal derivative never normalizes a zero-vector
+            if simd_distance(p1, p0) < 0.05 {
+                p1 = p0 + (p1Norm * 0.1) + (tangent * 0.05)
+            }
+            if simd_distance(p2, p1) < 0.05 {
+                let escapeVector = simd_normalize(simd_cross(p1Norm, tangent))
+                p2 = p1 + (escapeVector * 0.1)
+            }
             
             return MagneticLoopLine(p0: p0, p1: p1, p2: p2, isOpen: isOpen, intensity: intensity)
         }
+    
     public func calculateMagneticLoops(from data: MagnetogramData, connectionThresholdDegrees: Float = 25.0) -> [MagneticLoopLine] {
         // 1. Unpack the new regional twists dictionary
         let (posRegions, negRegions, regionalTwists) = extractActiveRegions(from: data)
