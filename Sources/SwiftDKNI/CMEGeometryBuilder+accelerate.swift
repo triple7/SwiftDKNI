@@ -41,26 +41,24 @@ extension CMEGeometryBuilder {
         let speeds  = generateAcceleratedRandoms(count: totalParticles, min: 0.05, max: 0.25)
         let phases  = generateAcceleratedRandoms(count: totalParticles, min: 0.0, max: 1.0)
         
-        // 4 Vertices per particle quad
         let totalVertices = totalParticles * 4
         var vertexDataArray = [Float](repeating: 0.0, count: totalVertices * 3)
         var normalDataArray = [Float](repeating: 0.0, count: totalVertices * 3)
         
-        var uv0DataArray    = [Float](repeating: 0.0, count: totalVertices * 2) // Base Quad UVs
-        var uv1DataArray    = [Float](repeating: 0.0, count: totalVertices * 2) // Speed & Offset
-        var uv2DataArray    = [Float](repeating: 0.0, count: totalVertices * 2) // Lat & Lon Norms
-        var colorDataArray  = [Float](repeating: 0.0, count: totalVertices * 4) // Phase & Intensity
+        var uv0DataArray    = [Float](repeating: 0.0, count: totalVertices * 2)
+        var uv1DataArray    = [Float](repeating: 0.0, count: totalVertices * 2)
+        var uv2DataArray    = [Float](repeating: 0.0, count: totalVertices * 2)
+        var colorDataArray  = [Float](repeating: 0.0, count: totalVertices * 4)
         
-        var indices = [UInt32](repeating: 0, count: totalParticles * 6) // 2 Triangles per quad
+        var indices = [UInt32](repeating: 0, count: totalParticles * 6)
         
         let pi = Float.pi
         let twoPi = Float.pi * 2.0
         var pIdx = 0
         
-        // Quad offsets mapping -1 to 1 for shape generation in Fragment Shader
         let quadUVs: [simd_float2] = [
-            simd_float2(-1, -1), simd_float2(1, -1),
-            simd_float2(-1,  1), simd_float2(1,  1)
+            simd_float2(0, 0), simd_float2(1, 0),
+            simd_float2(0, 1), simd_float2(1, 1)
         ]
         
         for line in validLines {
@@ -152,10 +150,10 @@ extension CMEGeometryBuilder {
         material.readsFromDepthBuffer = true
         material.isDoubleSided = true
         
-        // CRITICAL FIX: Real image bounds guarantees SceneKit maps texcoords[0]
-        // to diffuseTexcoord, leaving UVs immune to optimizer stripping.
-        material.diffuse.contents = createWhiteTexture()
-        material.diffuse.mappingChannel = 0
+        let dummyTex = createDummyTexture()
+        material.diffuse.contents = dummyTex
+        material.ambient.contents = dummyTex
+        material.specular.contents = dummyTex
         
         material.setValue(NSNumber(value: solarRadius), forKey: "u_solarRadius")
         
@@ -188,9 +186,8 @@ extension CMEGeometryBuilder {
             float uu = u * u;
             float3 basePos = (p0 * uu) + (p1 * (2.0f * u * t)) + (p2 * tt);
             
-            // Extract Quad coordinates from UV0
-            float quadX = _geometry.texcoords[0].x;
-            float quadY = _geometry.texcoords[0].y;
+            float quadX = (_geometry.texcoords[0].x * 2.0f) - 1.0f;
+            float quadY = (_geometry.texcoords[0].y * 2.0f) - 1.0f;
             
             float3 camRight = scn_node.inverseModelViewTransform[0].xyz;
             float3 camUp    = scn_node.inverseModelViewTransform[1].xyz;
@@ -200,39 +197,36 @@ extension CMEGeometryBuilder {
             
             _geometry.position.xyz = basePos + localOffset;
             
-            // MATH & PHYSICS LOGIC
-            float3 coreColor = float3(1.0f, 0.9f, 0.5f);
-            float3 midColor  = float3(1.0f, 0.4f, 0.0f);
-            float3 baseColor = mix(midColor, coreColor, loopIntensity);
-
-            float timeFade = sin(t * 3.14159f);
-            float twinkle = (sin(scn_frame.time * 15.0f + phase * 6.28318f) * 0.5f) + 0.5f;
+            _geometry.texcoords[0] = float2(quadX, quadY);
+            _geometry.texcoords[1] = float2(t, phase);
+            _geometry.texcoords[2] = float2(loopIntensity, 0.0f);
             
-            float alpha = timeFade * pow(timeFade, 1.5f) * (0.4f + 0.6f * twinkle);
-            
-            // Write physics-driven color direct to vertex color. 
-            // Fragment shader reads this automatically via _surface.diffuse.rgb!
-            _geometry.color.rgb = baseColor * 8.0f * alpha;
-            _geometry.color.a = alpha;
             """,
             
             .fragment: """
             #pragma transparent
             #pragma body
             
-            // Extract Quad Coordinates (-1 to 1) perfectly preserved in diffuseTexcoord
             float2 quadUV = _surface.diffuseTexcoord;
+            float t = _surface.ambientTexcoord.x;
+            float phase = _surface.ambientTexcoord.y;
+            float loopIntensity = _surface.specularTexcoord.x;
 
-            // DRAW PROCEDURAL SHAPE (Mathematical Circle)
+            float3 coreColor = float3(1.0f, 0.9f, 0.5f);
+            float3 midColor  = float3(1.0f, 0.4f, 0.0f);
+            float3 baseColor = mix(midColor, coreColor, loopIntensity);
+
             float dist = length(quadUV);
             float shapeMask = smoothstep(1.0f, 0.8f, dist);
 
-            // Read the final physics-adjusted brightness computed in the Vertex Shader
-            float3 vertexColor = _surface.diffuse.rgb;
+            float timeFade = sin(t * 3.14159f);
+            float twinkle = (sin(scn_frame.time * 15.0f + phase * 6.28318f) * 0.5f) + 0.5f;
             
-            // Apply shape mask. 0.0 = invisible in Additive mode.
-            _surface.emission.rgb = vertexColor * shapeMask;
+            float alpha = timeFade * pow(timeFade, 1.5f) * (0.4f + 0.6f * twinkle);
+            
+            _surface.emission.rgb = baseColor * 8.0f * alpha * shapeMask;
             _surface.diffuse.rgb = float3(0.0f);
+            
             """
         ]
         
@@ -242,22 +236,21 @@ extension CMEGeometryBuilder {
         return node
     }
     
-    // Explicit white texture with properly defined boundaries
-    private func createWhiteTexture() -> XImage {
+    private func createDummyTexture() -> XImage {
         let size = CGSize(width: 4, height: 4)
 #if os(macOS)
         let image = NSImage(size: size)
         image.lockFocus()
-        NSColor.white.setFill()
-        let rect = NSRect(origin: .zero, size: size)
-        rect.fill()
+        NSColor.black.setFill()
+        let bounds = NSRect(origin: .zero, size: size)
+        bounds.fill()
         image.unlockFocus()
         return image
 #else
         UIGraphicsBeginImageContextWithOptions(size, false, 1.0)
-        UIColor.white.setFill()
-        let rect = CGRect(origin: .zero, size: size)
-        UIRectFill(rect)
+        UIColor.black.setFill()
+        let bounds = CGRect(origin: .zero, size: size)
+        UIRectFill(bounds)
         let image = UIGraphicsGetImageFromCurrentImageContext()!
         UIGraphicsEndImageContext()
         return image

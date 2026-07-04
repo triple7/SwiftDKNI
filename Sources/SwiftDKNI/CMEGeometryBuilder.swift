@@ -202,8 +202,8 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         var pIdx = 0
         
         let quadUVs: [simd_float2] = [
-            simd_float2(-1, -1), simd_float2(1, -1),
-            simd_float2(-1,  1), simd_float2(1,  1)
+            simd_float2(0, 0), simd_float2(1, 0),
+            simd_float2(0, 1), simd_float2(1, 1)
         ]
         
         for line in validLines {
@@ -295,9 +295,10 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         material.readsFromDepthBuffer = true
         material.isDoubleSided = true
         
-        let dummyTex = createWhiteTexture()
+        let dummyTex = createDummyTexture()
         material.diffuse.contents = dummyTex
-        material.diffuse.mappingChannel = 0
+        material.ambient.contents = dummyTex
+        material.specular.contents = dummyTex
         
         material.setValue(NSNumber(value: solarRadius), forKey: "u_solarRadius")
         
@@ -330,8 +331,8 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             float uu = u * u;
             float3 basePos = (p0 * uu) + (p1 * (2.0f * u * t)) + (p2 * tt);
             
-            float quadX = _geometry.texcoords[0].x;
-            float quadY = _geometry.texcoords[0].y;
+            float quadX = (_geometry.texcoords[0].x * 2.0f) - 1.0f;
+            float quadY = (_geometry.texcoords[0].y * 2.0f) - 1.0f;
             
             float3 camRight = scn_node.inverseModelViewTransform[0].xyz;
             float3 camUp    = scn_node.inverseModelViewTransform[1].xyz;
@@ -341,17 +342,10 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             
             _geometry.position.xyz = basePos + localOffset;
             
-            float3 coreColor = float3(1.0f, 0.9f, 0.5f);
-            float3 midColor  = float3(1.0f, 0.4f, 0.0f);
-            float3 baseColor = mix(midColor, coreColor, loopIntensity);
-
-            float timeFade = sin(t * 3.14159f);
-            float twinkle = (sin(scn_frame.time * 15.0f + phase * 6.28318f) * 0.5f) + 0.5f;
+            _geometry.texcoords[0] = float2(quadX, quadY);
+            _geometry.texcoords[1] = float2(t, phase);
+            _geometry.texcoords[2] = float2(loopIntensity, 0.0f);
             
-            float alpha = timeFade * pow(timeFade, 1.5f) * (0.4f + 0.6f * twinkle);
-            
-            _geometry.color.rgb = baseColor * 8.0f * alpha;
-            _geometry.color.a = alpha;
             """,
             
             .fragment: """
@@ -359,14 +353,25 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             #pragma body
             
             float2 quadUV = _surface.diffuseTexcoord;
+            float t = _surface.ambientTexcoord.x;
+            float phase = _surface.ambientTexcoord.y;
+            float loopIntensity = _surface.specularTexcoord.x;
+
+            float3 coreColor = float3(1.0f, 0.9f, 0.5f);
+            float3 midColor  = float3(1.0f, 0.4f, 0.0f);
+            float3 baseColor = mix(midColor, coreColor, loopIntensity);
+
             float dist = length(quadUV);
-            
             float shapeMask = smoothstep(1.0f, 0.8f, dist);
 
-            float3 vertexColor = _surface.diffuse.rgb;
+            float timeFade = sin(t * 3.14159f);
+            float twinkle = (sin(scn_frame.time * 15.0f + phase * 6.28318f) * 0.5f) + 0.5f;
             
-            _surface.emission.rgb = vertexColor * shapeMask;
+            float alpha = timeFade * pow(timeFade, 1.5f) * (0.4f + 0.6f * twinkle);
+            
+            _surface.emission.rgb = baseColor * 8.0f * alpha * shapeMask;
             _surface.diffuse.rgb = float3(0.0f);
+            
             """
         ]
         
@@ -396,21 +401,21 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         return masterNode
     }
     
-    private func createWhiteTexture() -> XImage {
+    private func createDummyTexture() -> XImage {
         let size = CGSize(width: 4, height: 4)
 #if os(macOS)
         let image = NSImage(size: size)
         image.lockFocus()
-        NSColor.white.setFill()
-        let rect = NSRect(origin: .zero, size: size)
-        rect.fill()
+        NSColor.black.setFill()
+        let bounds = NSRect(origin: .zero, size: size)
+        bounds.fill()
         image.unlockFocus()
         return image
 #else
         UIGraphicsBeginImageContextWithOptions(size, false, 1.0)
-        UIColor.white.setFill()
-        let rect = CGRect(origin: .zero, size: size)
-        UIRectFill(rect)
+        UIColor.black.setFill()
+        let bounds = CGRect(origin: .zero, size: size)
+        UIRectFill(bounds)
         let image = UIGraphicsGetImageFromCurrentImageContext()!
         UIGraphicsEndImageContext()
         return image
