@@ -97,7 +97,10 @@ extension SwiftDKNI {
            let magData = try? magnetogramModeler.processFitsFile(at: fitsURL) {
             
             // Calculate the 3D loop splines from the flat FITS image
+            let magneticLoopStart = CACurrentMediaTime()
             let magneticLines = magnetogramModeler.calculateMagneticLoops(from: magData)
+            let magneticLoopEnd = CACurrentMediaTime()
+            print("generateCoronalSurfaceUsingMegnetoGram: processed magnetic loops in \(magneticLoopEnd - magneticLoopStart) seconds.")
             
             // ADDED: Filter and store only the open lines!
             openMagneticLines = magneticLines.filter { $0.isOpen }

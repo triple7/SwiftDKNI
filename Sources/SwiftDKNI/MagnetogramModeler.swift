@@ -71,6 +71,8 @@ public final class MagnetogramModeler: @unchecked Sendable {
     
     public func processFitsFile(at url: URL) throws -> MagnetogramData {
         print("processFitsFile: Processing magnetogram data")
+        let processFitsStart = CACurrentMediaTime()
+
         
         let fitsData = try Data(contentsOf: url)
         guard let fits = FitsFile.read(fitsData) else {
@@ -152,6 +154,9 @@ public final class MagnetogramModeler: @unchecked Sendable {
                 CGImageDestinationFinalize(destination)
             }
         }
+        
+        let processFitsEnd = CACurrentMediaTime()
+        print("processFitsFile: processed fits data in \(processFitsEnd - processFitsStart) seconds.")
         
         return MagnetogramData(cgImage: cgImage, width: width, height: height, fluxArray: dataArray)
     }
