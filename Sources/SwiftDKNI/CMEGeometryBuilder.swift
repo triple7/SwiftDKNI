@@ -340,6 +340,9 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         material.diffuse.contents = dummyTex
         material.ambient.contents = dummyTex
         material.specular.contents = dummyTex
+        material.diffuse.mappingChannel = 0
+        material.ambient.mappingChannel = 1
+        material.specular.mappingChannel = 2
         
         material.setValue(NSNumber(value: solarRadius), forKey: "u_solarRadius")
         
