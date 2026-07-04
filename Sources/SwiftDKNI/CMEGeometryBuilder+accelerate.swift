@@ -196,7 +196,6 @@ extension CMEGeometryBuilder {
 
             _geometry.position.xyz = basePos + localOffset;
 
-            // Pass packed data to fragment shader
             _geometry.texcoords[0] = float2(quadX, quadY);
             _geometry.texcoords[1] = float2(t, phase);
             _geometry.texcoords[2] = float2(loopIntensity, 0.0f);
@@ -212,7 +211,6 @@ extension CMEGeometryBuilder {
             float phase = _surface.ambientTexcoord.y;
             float loopIntensity = _surface.specularTexcoord.x;
 
-            // Calculate color strictly in the fragment stage
             float3 coreColor = float3(1.0f, 0.9f, 0.5f);
             float3 midColor  = float3(1.0f, 0.4f, 0.0f);
             float3 baseColor = mix(midColor, coreColor, loopIntensity);
@@ -225,7 +223,6 @@ extension CMEGeometryBuilder {
 
             float alpha = timeFade * pow(timeFade, 1.5f) * (0.4f + 0.6f * twinkle);
 
-            // Output emission directly
             _surface.emission.rgb = baseColor * 8.0f * alpha * shapeMask;
             _surface.diffuse.rgb = float3(0.0f);
             
