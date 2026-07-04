@@ -13,7 +13,7 @@ import simd
 
 extension CMEGeometryBuilder {
     
-    private func generateAcceleratedRandoms(count: Int, min: Float, max: Float) -> [Float] {
+    internal func generateAcceleratedRandoms(count: Int, min: Float, max: Float) -> [Float] {
         var randomInts = [UInt32](repeating: 0, count: count)
         arc4random_buf(&randomInts, count * MemoryLayout<UInt32>.size)
         
@@ -165,38 +165,39 @@ extension CMEGeometryBuilder {
             #pragma body
             float3 p1 = _geometry.position.xyz; 
             float3 p0 = _geometry.normal * u_solarRadius;
-            
+
             float speed = _geometry.texcoords[1].x;
             float offset = _geometry.texcoords[1].y;
-            
+
             float lat2Norm = _geometry.texcoords[2].x;
             float lon2Norm = _geometry.texcoords[2].y;
-            
+
             float phase = _geometry.color.r;
             float loopIntensity = _geometry.color.g;
-            
+
             float lat2 = (lat2Norm * 3.14159f) - 1.57079f;
             float lon2 = (lon2Norm * 6.28318f) - 3.14159f;
             float3 p2 = float3(cos(lat2)*sin(lon2), sin(lat2), cos(lat2)*cos(lon2)) * u_solarRadius;
-            
+
             float t = fract(offset + (scn_frame.time * speed));
-            
+
             float u = 1.0f - t;
             float tt = t * t;
             float uu = u * u;
             float3 basePos = (p0 * uu) + (p1 * (2.0f * u * t)) + (p2 * tt);
-            
-            float quadX = (_geometry.texcoords[0].x * 2.0f) - 1.0f;
-            float quadY = (_geometry.texcoords[0].y * 2.0f) - 1.0f;
-            
+
+            float quadX = _geometry.texcoords[0].x;
+            float quadY = _geometry.texcoords[0].y;
+
             float3 camRight = scn_node.inverseModelViewTransform[0].xyz;
             float3 camUp    = scn_node.inverseModelViewTransform[1].xyz;
-            
+
             float particleSize = (0.012f + (sin(t * 3.14159f) * 0.012f)) * u_solarRadius;
             float3 localOffset = (camRight * quadX + camUp * quadY) * particleSize;
-            
+
             _geometry.position.xyz = basePos + localOffset;
-            
+
+            // Pass packed data to fragment shader
             _geometry.texcoords[0] = float2(quadX, quadY);
             _geometry.texcoords[1] = float2(t, phase);
             _geometry.texcoords[2] = float2(loopIntensity, 0.0f);
@@ -206,12 +207,13 @@ extension CMEGeometryBuilder {
             .fragment: """
             #pragma transparent
             #pragma body
-            
+
             float2 quadUV = _surface.diffuseTexcoord;
             float t = _surface.ambientTexcoord.x;
             float phase = _surface.ambientTexcoord.y;
             float loopIntensity = _surface.specularTexcoord.x;
 
+            // Calculate color strictly in the fragment stage
             float3 coreColor = float3(1.0f, 0.9f, 0.5f);
             float3 midColor  = float3(1.0f, 0.4f, 0.0f);
             float3 baseColor = mix(midColor, coreColor, loopIntensity);
@@ -221,9 +223,10 @@ extension CMEGeometryBuilder {
 
             float timeFade = sin(t * 3.14159f);
             float twinkle = (sin(scn_frame.time * 15.0f + phase * 6.28318f) * 0.5f) + 0.5f;
-            
+
             float alpha = timeFade * pow(timeFade, 1.5f) * (0.4f + 0.6f * twinkle);
-            
+
+            // Output emission directly
             _surface.emission.rgb = baseColor * 8.0f * alpha * shapeMask;
             _surface.diffuse.rgb = float3(0.0f);
             

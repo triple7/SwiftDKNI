@@ -142,7 +142,7 @@ public final class MagnetogramModeler: @unchecked Sendable {
         
         let fileManager = FileManager.default
         if let docsDir = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first {
-            let starDir = docsDir.appendingPathComponent("star")
+            let starDir = docsDir.appendingPathComponent("stars")
             if !fileManager.fileExists(atPath: starDir.path) {
                 try? fileManager.createDirectory(at: starDir, withIntermediateDirectories: true, attributes: nil)
             }
