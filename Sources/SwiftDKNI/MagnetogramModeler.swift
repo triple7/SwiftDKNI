@@ -72,7 +72,7 @@ public final class MagnetogramModeler: @unchecked Sendable {
     public func processFitsFile(at url: URL) throws -> MagnetogramData {
         print("processFitsFile: Processing magnetogram data")
         let processFitsStart = CACurrentMediaTime()
-
+        
         
         let fitsData = try Data(contentsOf: url)
         guard let fits = FitsFile.read(fitsData) else {
@@ -87,7 +87,7 @@ public final class MagnetogramModeler: @unchecked Sendable {
         // As requested: direct extraction with a safe fallback
         var bitpix: Int = -32
         if let nativeBitpix = prime.bitpix as? Int {
-             bitpix = nativeBitpix
+            bitpix = nativeBitpix
         }
         
         let bytesPerPixel = abs(bitpix) / 8
@@ -160,10 +160,9 @@ public final class MagnetogramModeler: @unchecked Sendable {
         
         return MagnetogramData(cgImage: cgImage, width: width, height: height, fluxArray: dataArray)
     }
-
-    // MARK: - 4. PFSS Modeling & Magnetic Integration
     
-    private func extractActiveRegions(from data: MagnetogramData, thresholdGauss: Float = 40.0) -> (positive: [MagneticRegion], negative: [MagneticRegion]) {
+    // MARK: - 4. PFSS Modeling & Magnetic Integration
+    private func extractActiveRegions(from data: MagnetogramData, thresholdGauss: Float = 40.0) -> (positive: [MagneticRegion], negative: [MagneticRegion], regionalTwists: [String: simd_float2]) {
         
         print("\n=== MAGNETIC FIELD ANALYSIS ===")
         
@@ -177,6 +176,7 @@ public final class MagnetogramModeler: @unchecked Sendable {
         print("3. Minimum Threshold: > \(thresholdGauss)G")
         
         var bucketResults = [MagneticRegion?](repeating: nil, count: totalBuckets)
+        var bucketTwists = [simd_float2?](repeating: nil, count: totalBuckets)
         
         DispatchQueue.concurrentPerform(iterations: totalBuckets) { i in
             let bx = i % bucketsX
@@ -213,24 +213,58 @@ public final class MagnetogramModeler: @unchecked Sendable {
             if localMaxAbsFlux > thresholdGauss {
                 let lon = (Float(localPeakX) / Float(data.width)) * 360.0 - 180.0
                 let lat = (Float(localPeakY) / Float(data.height)) * 180.0 - 90.0
+                
                 bucketResults[i] = MagneticRegion(centroidLat: lat, centroidLon: lon, fluxIntensity: localPeakFlux, isPositive: localPeakFlux > 0)
+                
+                // Calculate the regional magnetic moment (Helicity)
+                var momentX: Float = 0.0
+                var momentY: Float = 0.0
+                
+                for cy in startY..<endY {
+                    let rowOffset = cy * data.width
+                    for cx in startX..<endX {
+                        let index = rowOffset + cx
+                        let flux = data.fluxArray[index]
+                        
+                        if !flux.isNaN {
+                            // Weight the distance from the peak by the absolute flux
+                            let dx = Float(cx - localPeakX)
+                            let dy = Float(cy - localPeakY)
+                            momentX += dx * abs(flux)
+                            momentY += dy * abs(flux)
+                        }
+                    }
+                }
+                
+                var twist = simd_float2(momentX, momentY)
+                if simd_length(twist) > 0.001 {
+                    twist = simd_normalize(twist)
+                } else {
+                    twist = simd_float2(1.0, 0.0) // Fallback for perfectly uniform points
+                }
+                
+                bucketTwists[i] = twist
             }
         }
         
         var posRegions: [MagneticRegion] = []
         var negRegions: [MagneticRegion] = []
+        var regionalTwists: [String: simd_float2] = [:]
         
-        for result in bucketResults {
-            if let region = result {
+        for i in 0..<totalBuckets {
+            if let region = bucketResults[i], let twist = bucketTwists[i] {
                 if region.isPositive { posRegions.append(region) }
                 else { negRegions.append(region) }
+                
+                // Create a unique key using the region's coordinates to map the twist
+                let key = "\(region.centroidLat)_\(region.centroidLon)"
+                regionalTwists[key] = twist
             }
         }
         
         print("4. Raw Buckets extracted: \(posRegions.count + negRegions.count)")
         
         // GEOMETRY SAFETY CAP:
-        // Prevents SceneKit from receiving millions of lines, which pegs the CPU/GPU
         let maxRegionsPerPolarity = 150
         
         posRegions.sort { abs($0.fluxIntensity) > abs($1.fluxIntensity) }
@@ -247,7 +281,7 @@ public final class MagnetogramModeler: @unchecked Sendable {
         print("6. Final Distinct Regions: \(posRegions.count) Positive, \(negRegions.count) Negative")
         print("===============================\n")
         
-        return (posRegions, negRegions)
+        return (posRegions, negRegions, regionalTwists)
     }
     
     private func sphericalToCartesian(lat: Float, lon: Float, radius: Float = 1.0) -> simd_float3 {
@@ -330,7 +364,8 @@ public final class MagnetogramModeler: @unchecked Sendable {
     }
     
     public func calculateMagneticLoops(from data: MagnetogramData, connectionThresholdDegrees: Float = 25.0) -> [MagneticLoopLine] {
-        let (posRegions, negRegions) = extractActiveRegions(from: data)
+        // 1. Unpack the new regional twists dictionary
+        let (posRegions, negRegions, regionalTwists) = extractActiveRegions(from: data)
         
         print("\n=== TRACING MAGNETIC SPLINES ===")
         print("Simulating gravity & tracing 12 field lines per region...")
@@ -349,6 +384,10 @@ public final class MagnetogramModeler: @unchecked Sendable {
             let pos = posRegions[i]
             var localLoops: [MagneticLoopLine] = []
             
+            // 2. Fetch the regional twist (helicity) for this specific anchor
+            let key = "\(pos.centroidLat)_\(pos.centroidLon)"
+            let twist = regionalTwists[key] ?? simd_float2(1.0, 0.0)
+            
             let centerPos = sphericalToCartesian(lat: pos.centroidLat, lon: pos.centroidLon)
             let up = simd_float3(0, 1, 0)
             var right = simd_cross(centerPos, up)
@@ -361,7 +400,8 @@ public final class MagnetogramModeler: @unchecked Sendable {
                 let offset = (right * cos(angle) + localUp * sin(angle)) * bundleSpreadRadius
                 let p0 = simd_normalize(centerPos + offset)
                 
-                let loop = traceFieldLine(startPoint: p0, regions: allRegions3D, intensity: pos.fluxIntensity)
+                // 3. Pass the twist into your tracing function
+                let loop = traceFieldLine(startPoint: p0, regions: allRegions3D, intensity: pos.fluxIntensity, twist: twist)
                 
                 if simd_length(loop.p1) > 1.01 {
                     localLoops.append(loop)
