@@ -18,7 +18,6 @@ extension CMEGeometryBuilder {
         arc4random_buf(&randomInts, count * MemoryLayout<UInt32>.size)
         
         var randomFloats = [Float](repeating: 0.0, count: count)
-        
         vDSP_vfltu32(randomInts, 1, &randomFloats, 1, vDSP_Length(count))
         
         var divisor = Float(UInt32.max)
@@ -30,7 +29,7 @@ extension CMEGeometryBuilder {
         
         return randomFloats
     }
-    
+
     public func buildAcceleratedEnergyTunnels(from lines: [MagneticLoopLine], particlesPerLine: Int = 20, solarRadius: Float) -> SCNNode {
         
         let validLines = lines.filter { !$0.isOpen }
