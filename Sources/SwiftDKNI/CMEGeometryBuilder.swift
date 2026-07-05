@@ -201,7 +201,7 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             return SCNGeometry(sources: [source, uvSource, colorSource], elements: [element])
         }
 
-    private func buildEnergyTunnels(from lines: [MagneticLoopLine], particlesPerUnitLength: Float = 15.0, solarRadius: Float) -> SCNNode {
+    private func buildEnergyTunnels(from lines: [MagneticLoopLine], particlesPerUnitLength: Float = 100.0, solarRadius: Float) -> SCNNode {
             let validLines = lines.filter { !$0.isOpen }
             
             // 1. PRE-CALCULATE DYNAMIC PARTICLE COUNTS
@@ -390,7 +390,7 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         baseLoopsNode.categoryBitMask = 2
         
         let tunnelStart = CACurrentMediaTime()
-        let energyTunnelsNode = buildEnergyTunnels(from: lines, particlesPerUnitLength: 15.0, solarRadius: solarRadius)
+        let energyTunnelsNode = buildEnergyTunnels(from: lines, particlesPerUnitLength: 50.0, solarRadius: solarRadius)
         let tunnelEnd = CACurrentMediaTime()
         print("createCoronalSurface: Created energy tunnels in \(tunnelEnd - tunnelStart) seconds.")
         
