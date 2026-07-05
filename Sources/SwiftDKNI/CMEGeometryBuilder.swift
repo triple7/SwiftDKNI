@@ -147,60 +147,79 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             return SCNGeometry(sources: [source, uvSource], elements: [element])
         }
 
-    public func buildDataDrivenMagneticLoops(from lines: [MagneticLoopLine], pointsPerLoop: Int = 50, solarRadius: Float) -> SCNGeometry {
-        var vertices: [simd_float3] = []
-        var indices: [Int32] = []
-        var texcoords: [simd_float2] = []
-        var colors: [simd_float4] = []
-        
-        var currentIndex: Int32 = 0
-        
-        for line in lines {
-            guard !line.isOpen else { continue }
+    public func buildDataDrivenMagneticLoops(from lines: [MagneticLoopLine], pointsPerUnitLength: Float = 35.0, solarRadius: Float) -> SCNGeometry {
+            var vertices: [simd_float3] = []
+            var indices: [Int32] = []
+            var texcoords: [simd_float2] = []
+            var colors: [simd_float4] = []
             
-            let phase = Float.random(in: 0.0...1.0)
+            var currentIndex: Int32 = 0
             
-            for i in 0...pointsPerLoop {
-                let t = Float(i) / Float(pointsPerLoop)
+            for line in lines {
+                guard !line.isOpen else { continue }
                 
-                vertices.append(line.position(at: t) * solarRadius)
-                texcoords.append(simd_float2(t, phase))
+                let phase = Float.random(in: 0.0...1.0)
                 
-                let coreColor = simd_float4(1.0, 0.7, 0.4, 0.15)
-                let edgeColor = simd_float4(0.8, 0.2, 0.0, 0.05)
+                // 1. Calculate the approximate physical length of this specific bezier curve
+                let approxLength = simd_distance(line.p0, line.p1) + simd_distance(line.p1, line.p2)
                 
-                let apexness = 1.0 - (abs(t - 0.5) * 2.0)
-                colors.append(mixColor(edgeColor, coreColor, factor: apexness))
+                // 2. Scale the number of points by the physical length (minimum 10 points)
+                let dynamicPoints = max(10, Int(approxLength * pointsPerUnitLength))
                 
-                if i > 0 {
-                    indices.append(currentIndex - 1)
-                    indices.append(currentIndex)
+                for i in 0...dynamicPoints {
+                    let t = Float(i) / Float(dynamicPoints)
+                    
+                    vertices.append(line.position(at: t) * solarRadius)
+                    texcoords.append(simd_float2(t, phase))
+                    
+                    let coreColor = simd_float4(1.0, 0.7, 0.4, 0.15)
+                    let edgeColor = simd_float4(0.8, 0.2, 0.0, 0.05)
+                    
+                    let apexness = 1.0 - (abs(t - 0.5) * 2.0)
+                    colors.append(mixColor(edgeColor, coreColor, factor: apexness))
+                    
+                    if i > 0 {
+                        indices.append(currentIndex - 1)
+                        indices.append(currentIndex)
+                    }
+                    currentIndex += 1
                 }
-                currentIndex += 1
             }
+            
+            let vertexData = Data(bytes: vertices, count: vertices.count * MemoryLayout<simd_float3>.size)
+            let source = SCNGeometrySource(data: vertexData, semantic: .vertex, vectorCount: vertices.count, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<simd_float3>.size)
+            
+            let uvData = Data(bytes: texcoords, count: texcoords.count * MemoryLayout<simd_float2>.size)
+            let uvSource = SCNGeometrySource(data: uvData, semantic: .texcoord, vectorCount: texcoords.count, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<simd_float2>.size)
+            
+            let colorData = Data(bytes: colors, count: colors.count * MemoryLayout<simd_float4>.size)
+            let colorSource = SCNGeometrySource(data: colorData, semantic: .color, vectorCount: colors.count, usesFloatComponents: true, componentsPerVector: 4, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<simd_float4>.size)
+            
+            let indexData = Data(bytes: indices, count: indices.count * MemoryLayout<Int32>.size)
+            let element = SCNGeometryElement(data: indexData, primitiveType: .line, primitiveCount: indices.count / 2, bytesPerIndex: MemoryLayout<Int32>.size)
+            
+            return SCNGeometry(sources: [source, uvSource, colorSource], elements: [element])
         }
-        
-        let vertexData = Data(bytes: vertices, count: vertices.count * MemoryLayout<simd_float3>.size)
-        let source = SCNGeometrySource(data: vertexData, semantic: .vertex, vectorCount: vertices.count, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<simd_float3>.size)
-        
-        let uvData = Data(bytes: texcoords, count: texcoords.count * MemoryLayout<simd_float2>.size)
-        let uvSource = SCNGeometrySource(data: uvData, semantic: .texcoord, vectorCount: texcoords.count, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<simd_float2>.size)
-        
-        let colorData = Data(bytes: colors, count: colors.count * MemoryLayout<simd_float4>.size)
-        let colorSource = SCNGeometrySource(data: colorData, semantic: .color, vectorCount: colors.count, usesFloatComponents: true, componentsPerVector: 4, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<simd_float4>.size)
-        
-        let indexData = Data(bytes: indices, count: indices.count * MemoryLayout<Int32>.size)
-        let element = SCNGeometryElement(data: indexData, primitiveType: .line, primitiveCount: indices.count / 2, bytesPerIndex: MemoryLayout<Int32>.size)
-        
-        return SCNGeometry(sources: [source, uvSource, colorSource], elements: [element])
-    }
-    
-    private func buildEnergyTunnels(from lines: [MagneticLoopLine], particlesPerLine: Int = 20, solarRadius: Float) -> SCNNode {
+
+    private func buildEnergyTunnels(from lines: [MagneticLoopLine], particlesPerUnitLength: Float = 15.0, solarRadius: Float) -> SCNNode {
             let validLines = lines.filter { !$0.isOpen }
-            let totalParticles = validLines.count * particlesPerLine
+            
+            // 1. PRE-CALCULATE DYNAMIC PARTICLE COUNTS
+            // We must do this first to know exactly how large to make the Accelerate arrays
+            var lineParticleCounts: [Int] = []
+            var totalParticles = 0
+            
+            for line in validLines {
+                let approxLength = simd_distance(line.p0, line.p1) + simd_distance(line.p1, line.p2)
+                // Ensure even tiny loops get at least 10 particles, scale up linearly for massive ones
+                let count = max(10, Int(approxLength * particlesPerUnitLength))
+                lineParticleCounts.append(count)
+                totalParticles += count
+            }
+            
             guard totalParticles > 0 else { return SCNNode() }
             
-            // 1. Generate ALL randoms upfront using Accelerate
+            // 2. Generate ALL randoms upfront using Accelerate with the new total size
             let offsets = generateAcceleratedRandoms(count: totalParticles, min: 0.0, max: 1.0)
             let speeds  = generateAcceleratedRandoms(count: totalParticles, min: 0.05, max: 0.25)
             let phases  = generateAcceleratedRandoms(count: totalParticles, min: 0.0, max: 1.0)
@@ -223,7 +242,7 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
                 simd_float2(0, 1), simd_float2(1, 1)
             ]
             
-            for line in validLines {
+            for (lineIdx, line) in validLines.enumerated() {
                 let p1 = line.p1 * solarRadius
                 let p0Norm = simd_normalize(line.p0)
                 let p2Norm = simd_normalize(line.p2)
@@ -235,8 +254,10 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
                 let lon2Norm = (lon2 + pi) / twoPi
                 let loopIntensity = min(1.0, abs(line.intensity) / 1000.0)
                 
-                for _ in 0..<particlesPerLine {
-                    // 2. Read directly from Accelerate arrays (No Float.random here)
+                // Fetch the pre-calculated particle count for this specific line
+                let particlesForThisLine = lineParticleCounts[lineIdx]
+                
+                for _ in 0..<particlesForThisLine {
                     let offset = offsets[pIdx]
                     let speed = speeds[pIdx]
                     let phase = phases[pIdx]
@@ -308,7 +329,10 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             
             let material = SCNMaterial()
             material.lightingModel = .constant
-            material.blendMode = .add
+            
+            // 🚨 CRITICAL CHANGE: Changed from .add to .alpha to respect depth occlusion
+            material.blendMode = .alpha
+            
             material.writesToDepthBuffer = false
             material.readsFromDepthBuffer = true
             material.isDoubleSided = true
@@ -323,7 +347,6 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             
             material.setValue(NSNumber(value: solarRadius), forKey: "u_solarRadius")
             
-            // Load the external energy tunnel shaders
             let fileManager = FileManager.default
             let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
             let geometryShaderURL = documentsURL.appendingPathComponent("stars/energytunnel_geometry.metal")
@@ -367,7 +390,7 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         baseLoopsNode.categoryBitMask = 2
         
         let tunnelStart = CACurrentMediaTime()
-        let energyTunnelsNode = buildEnergyTunnels(from: lines, particlesPerLine: 20, solarRadius: solarRadius)
+        let energyTunnelsNode = buildEnergyTunnels(from: lines, particlesPerUnitLength: 15.0, solarRadius: solarRadius)
         let tunnelEnd = CACurrentMediaTime()
         print("createCoronalSurface: Created energy tunnels in \(tunnelEnd - tunnelStart) seconds.")
         
