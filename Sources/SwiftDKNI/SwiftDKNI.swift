@@ -53,7 +53,8 @@ extension SwiftDKNI {
             pointsPerEvent: Int,
             startTime: String,
             endTime: String,
-            cachedIfExists: Bool = true // ADDED: Global cache flag
+            cachedIfExists: Bool = true, // Retained cache flag
+            renderCME: Bool = true // ADDED: Global CME render flag
         ) async throws -> SCNNode {
             
             // 1. Fetch the averaged data using the securely injected API key
@@ -113,45 +114,47 @@ extension SwiftDKNI {
                 coronalSurfaceNode.addChildNode(globalMagneticNode)
             }
             
-            // 4. Generate and align each CME event
-            for event in events {
-                
-                // Trap 2 Fix: Drop far-sided events missing coordinate data
-                guard event.latitude != nil, event.longitude != nil else {
-                    print("Skipped CME: Missing spatial coordinates (Far-sided event)")
-                    continue
+            // 4. Generate and align each CME event ONLY if the flag is true
+            if renderCME {
+                for event in events {
+                    
+                    // Trap 2 Fix: Drop far-sided events missing coordinate data
+                    guard event.latitude != nil, event.longitude != nil else {
+                        print("Skipped CME: Missing spatial coordinates (Far-sided event)")
+                        continue
+                    }
+                    
+                    let parsedDate = donkiFormatter.date(from: event.startTime) ?? backupISOFormatter.date(from: event.startTime)
+                    
+                    guard let eventDate = parsedDate else {
+                        print("Skipped CME: Unrecognized Date Format - \(event.startTime)")
+                        continue
+                    }
+                    
+                    let ignitionOffset = Float(eventDate.timeIntervalSince(simulationStart))
+                    let safeIgnitionTime = max(0.0, ignitionOffset)
+                    
+                    // Generate the specialized node using the SCNSphere's exact physical radius
+                    // ADDED: We now pass the openMagneticLines to map the DONKI event to the FITS splines
+                    let cmeNode = try! renderer.createCoronalEjectionNode(
+                        for: event,
+                        openLines: openMagneticLines,
+                        pointCount: pointsPerEvent,
+                        solarRadius: Float(sphere.radius)
+                    )
+                    
+                    // Bind the calculated ignition time to the node's material
+                    if let material = cmeNode.geometry?.materials.first {
+                        var ignitionFloat = safeIgnitionTime
+                        let ignitionData = Data(bytes: &ignitionFloat, count: MemoryLayout<Float>.size)
+                        material.setValue(ignitionData, forKey: "u_ignitionTime")
+                    }
+                    
+                    coronalSurfaceNode.addChildNode(cmeNode)
+                    
+                    // NOTE: We no longer generate local magnetic loop geometries per event here,
+                    // as the entire global field is handled by the Magnetogram FITS block above!
                 }
-                
-                let parsedDate = donkiFormatter.date(from: event.startTime) ?? backupISOFormatter.date(from: event.startTime)
-                
-                guard let eventDate = parsedDate else {
-                    print("Skipped CME: Unrecognized Date Format - \(event.startTime)")
-                    continue
-                }
-                
-                let ignitionOffset = Float(eventDate.timeIntervalSince(simulationStart))
-                let safeIgnitionTime = max(0.0, ignitionOffset)
-                
-                // Generate the specialized node using the SCNSphere's exact physical radius
-                // ADDED: We now pass the openMagneticLines to map the DONKI event to the FITS splines
-                let cmeNode = try! renderer.createCoronalEjectionNode(
-                    for: event,
-                    openLines: openMagneticLines,
-                    pointCount: pointsPerEvent,
-                    solarRadius: Float(sphere.radius)
-                )
-                
-                // Bind the calculated ignition time to the node's material
-                if let material = cmeNode.geometry?.materials.first {
-                    var ignitionFloat = safeIgnitionTime
-                    let ignitionData = Data(bytes: &ignitionFloat, count: MemoryLayout<Float>.size)
-                    material.setValue(ignitionData, forKey: "u_ignitionTime")
-                }
-                
-                coronalSurfaceNode.addChildNode(cmeNode)
-                
-                // NOTE: We no longer generate local magnetic loop geometries per event here,
-                // as the entire global field is handled by the Magnetogram FITS block above!
             }
             
             // 5. Fetch the active regions
@@ -246,7 +249,7 @@ extension SwiftDKNI {
             
             return coronalSurfaceNode
         }
-    
+
     public func addDistortionTechniqueToScene(sceneView: SCNView) {
         let techniqueDict: [String: Any] = [
             "symbols": [
