@@ -392,6 +392,30 @@ public final class MagnetogramModeler: @unchecked Sendable {
                 p2 = p1 + (escapeVector * 0.1)
             }
             
+            // 🚨 THE NaN TRAP 🚨
+            let hasNaN = p0.x.isNaN || p0.y.isNaN || p0.z.isNaN ||
+                         p1.x.isNaN || p1.y.isNaN || p1.z.isNaN ||
+                         p2.x.isNaN || p2.y.isNaN || p2.z.isNaN
+            
+            if hasNaN {
+                print("🚨 NaN TRAP TRIGGERED 🚨")
+                print("Start Point: \(p0)")
+                print("Final p0: \(p0)")
+                print("Final p1: \(p1)")
+                print("Final p2: \(p2)")
+                print("Twist vector: \(twist)")
+                print("Max Radius: \(maxRadius)")
+                print("Tangent: \(tangent), Binormal: \(binormal)")
+                print("Directional Offset: \(directionalOffset)")
+                print("---------------------------------")
+                
+                // Return a safe dummy line slightly above the surface so SceneKit doesn't crash
+                let safe0 = simd_float3(0, 1.05, 0)
+                let safe1 = simd_float3(0, 1.15, 0)
+                let safe2 = simd_float3(0, 1.25, 0)
+                return MagneticLoopLine(p0: safe0, p1: safe1, p2: safe2, isOpen: isOpen, intensity: intensity)
+            }
+            
             return MagneticLoopLine(p0: p0, p1: p1, p2: p2, isOpen: isOpen, intensity: intensity)
         }
     
