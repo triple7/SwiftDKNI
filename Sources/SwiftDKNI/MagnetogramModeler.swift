@@ -36,29 +36,46 @@ public final class MagnetogramModeler: @unchecked Sendable {
     
     // MARK: - 1. API Request
     
-    public func fetchLatestSynopticMagnetogram() async throws -> URL {
-        let rotationNumber = 2270
-        let urlString = "http://jsoc.stanford.edu/data/hmi/synoptic/hmi.Synoptic_Mr.\(rotationNumber).fits"
-        
-        guard let url = URL(string: urlString) else {
-            throw URLError(.badURL)
+    public func fetchLatestSynopticMagnetogram(cachedIfExists: Bool = true) async throws -> URL {
+            let rotationNumber = 2270
+            let urlString = "http://jsoc.stanford.edu/data/hmi/synoptic/hmi.Synoptic_Mr.\(rotationNumber).fits"
+            
+            guard let url = URL(string: urlString) else {
+                throw URLError(.badURL)
+            }
+            
+            let fileManager = FileManager.default
+            let docsDir = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
+            let starsDirectoryURL = docsDir.appendingPathComponent("stars")
+            let savedURL = starsDirectoryURL.appendingPathComponent("latest_magnetogram.fits")
+            
+            // 1. Check the local cache if requested
+            if cachedIfExists && fileManager.fileExists(atPath: savedURL.path) {
+                print("MagnetogramModeler: Loaded magnetogram from cache at \(savedURL.lastPathComponent)")
+                return savedURL
+            }
+            
+            // 2. Perform the Network Request if we don't have cached data
+            let (localURL, response) = try await URLSession.shared.download(from: url)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                throw URLError(.badServerResponse)
+            }
+            
+            // Ensure the 'stars' directory exists before moving the file
+            if !fileManager.fileExists(atPath: starsDirectoryURL.path) {
+                try fileManager.createDirectory(at: starsDirectoryURL, withIntermediateDirectories: true, attributes: nil)
+            }
+            
+            // Clean up any corrupted or old file at the exact path just in case
+            if fileManager.fileExists(atPath: savedURL.path) {
+                try fileManager.removeItem(at: savedURL)
+            }
+            
+            try fileManager.moveItem(at: localURL, to: savedURL)
+            print("MagnetogramModeler: Saved newly fetched magnetogram to cache.")
+            
+            return savedURL
         }
-        
-        let (localURL, response) = try await URLSession.shared.download(from: url)
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-            throw URLError(.badServerResponse)
-        }
-        
-        let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        let savedURL = docsDir.appendingPathComponent("latest_magnetogram.fits")
-        
-        if FileManager.default.fileExists(atPath: savedURL.path) {
-            try FileManager.default.removeItem(at: savedURL)
-        }
-        try FileManager.default.moveItem(at: localURL, to: savedURL)
-        
-        return savedURL
-    }
     
     // MARK: - 2 & 3. FITS Parsing
     
