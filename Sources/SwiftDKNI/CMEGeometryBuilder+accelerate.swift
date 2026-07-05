@@ -155,7 +155,51 @@ extension CMEGeometryBuilder {
         material.specular.contents = dummyTex
         
         material.setValue(NSNumber(value: solarRadius), forKey: "u_solarRadius")
-        
+        // --- geometry shader uniforms
+        // 0.025f keeps the loops at the current width
+        var defaultTunnelRadius: Float = 0.025
+        let tunnelRadiusData = Data(bytes: &defaultTunnelRadius, count: MemoryLayout<Float>.size)
+        material.setValue(tunnelRadiusData, forKey: "u_tunnelRadiusBase")
+
+        // 0.08f is the current base quad size
+        var defaultBaseSize: Float = 0.08
+        let baseSizeData = Data(bytes: &defaultBaseSize, count: MemoryLayout<Float>.size)
+        material.setValue(baseSizeData, forKey: "u_particleBaseSize")
+
+        // 0.02f is the current sizing variance between particles
+        var defaultVariance: Float = 0.02
+        let varianceData = Data(bytes: &defaultVariance, count: MemoryLayout<Float>.size)
+        material.setValue(varianceData, forKey: "u_particleVariance")
+
+        // Fragment shader uniforms
+        // 0.08f is the baseline warp required to break the perfect sphere shape
+        var defaultWarp: Float = 0.08
+        let warpData = Data(bytes: &defaultWarp, count: MemoryLayout<Float>.size)
+        material.setValue(warpData, forKey: "u_warpIntensity")
+
+        // 2.0f is the baseline boil speed
+        var defaultBoil: Float = 2.0
+        let boilData = Data(bytes: &defaultBoil, count: MemoryLayout<Float>.size)
+        material.setValue(boilData, forKey: "u_boilSpeed")
+
+        // 15.0f is the rapid twinkle speed
+        var defaultTwinkle: Float = 15.0
+        let twinkleData = Data(bytes: &defaultTwinkle, count: MemoryLayout<Float>.size)
+        material.setValue(twinkleData, forKey: "u_twinkleSpeed")
+
+        // --- Inject Thermal Color Defaults ---
+
+        var defaultCoreColor = simd_float3(1.0, 0.95, 0.8)
+        let coreColorData = Data(bytes: &defaultCoreColor, count: MemoryLayout<simd_float3>.size)
+        material.setValue(coreColorData, forKey: "u_coreColor")
+
+        var defaultMidColor = simd_float3(1.0, 0.4, 0.0)
+        let midColorData = Data(bytes: &defaultMidColor, count: MemoryLayout<simd_float3>.size)
+        material.setValue(midColorData, forKey: "u_midColor")
+
+        var defaultEdgeColor = simd_float3(0.4, 0.02, 0.0)
+        let edgeColorData = Data(bytes: &defaultEdgeColor, count: MemoryLayout<simd_float3>.size)
+        material.setValue(edgeColorData, forKey: "u_edgeColor")
         let fileManager = FileManager.default
         let docsDir = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
         let starsDirectoryURL = docsDir.appendingPathComponent("stars")
