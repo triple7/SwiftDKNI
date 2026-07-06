@@ -192,13 +192,13 @@ extension CMEGeometryBuilder {
                 // Geometry Shader Uniforms
                 var defaultTunnelRadius: Float = 0.025
                 material.setValue(Data(bytes: &defaultTunnelRadius, count: MemoryLayout<Float>.size), forKey: "u_tunnelRadiusBase")
-                var defaultBaseSize: Float = 0.08
+                var defaultBaseSize: Float = 0.04
                 material.setValue(Data(bytes: &defaultBaseSize, count: MemoryLayout<Float>.size), forKey: "u_particleBaseSize")
                 var defaultVariance: Float = 0.02
                 material.setValue(Data(bytes: &defaultVariance, count: MemoryLayout<Float>.size), forKey: "u_particleVariance")
                 
                 // Fragment Shader Uniforms
-                var defaultWarp: Float = 0.08
+                var defaultWarp: Float = 0.027
                 material.setValue(Data(bytes: &defaultWarp, count: MemoryLayout<Float>.size), forKey: "u_warpIntensity")
                 var defaultBoil: Float = 2.0
                 material.setValue(Data(bytes: &defaultBoil, count: MemoryLayout<Float>.size), forKey: "u_boilSpeed")
