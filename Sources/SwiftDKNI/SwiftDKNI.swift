@@ -135,8 +135,7 @@ extension SwiftDKNI {
                         )
                         
                         if let material = cmeNode.geometry?.materials.first {
-                            var ignitionFloat = safeIgnitionTime
-                            let ignitionData = Data(bytes: &ignitionFloat, count: MemoryLayout<Float>.size)
+                            material.setValue(NSNumber(value: safeIgnitionTime), forKey: "u_ignitionTime")
                         }
                         
                         coronalSurfaceNode.addChildNode(cmeNode)
