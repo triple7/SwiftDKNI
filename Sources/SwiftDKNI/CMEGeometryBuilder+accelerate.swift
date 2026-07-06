@@ -159,7 +159,7 @@ extension CMEGeometryBuilder {
             
             let material = SCNMaterial()
             material.lightingModel = .constant
-            material.blendMode = .alpha // Respects depth occlusion
+            material.blendMode = .add
             material.writesToDepthBuffer = false
             material.readsFromDepthBuffer = true
             material.isDoubleSided = true
@@ -168,7 +168,6 @@ extension CMEGeometryBuilder {
             material.diffuse.contents = dummyTex
             material.ambient.contents = dummyTex
             material.specular.contents = dummyTex
-        material.transparent.contents = dummyTex
             let fileManager = FileManager.default
             let docsDir = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
             let starsDirectoryURL = docsDir.appendingPathComponent("stars")
