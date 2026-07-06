@@ -76,7 +76,7 @@ final public class CMEFluxRopeRenderer: Sendable {
         // 3. Safely box Floats for SceneKit KVC
         material.setValue(NSNumber(value: 0.3), forKey: "u_thickness")
         material.setValue(NSNumber(value: 0.0), forKey: "u_globalTime")
-        material.setValue(NSNumber(value: 0.0), forKey: "u_ignitionTime")
+        material.setValue(NSNumber(value: Float(0.0)), forKey: "u_ignitionTime")
         
         let visualSpeedScale: Float = 0.001
         let scaledSpeed = Float(event.speed) * visualSpeedScale

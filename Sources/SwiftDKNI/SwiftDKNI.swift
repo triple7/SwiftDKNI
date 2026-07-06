@@ -125,7 +125,7 @@ extension SwiftDKNI {
                         }
                         
                         let ignitionOffset = Float(eventDate.timeIntervalSince(simulationStart))
-                        let safeIgnitionTime = max(0.0, ignitionOffset)
+                        let safeIgnitionTime = Float(max(0.0, ignitionOffset))
                         
                         let cmeNode = try! renderer.createCoronalEjectionNode(
                             for: event,
@@ -135,7 +135,6 @@ extension SwiftDKNI {
                         )
                         
                         if let material = cmeNode.geometry?.materials.first {
-                            // 🚨 MSOD FIX: Safely wrap the float in NSNumber instead of raw Data bytes
                             material.setValue(NSNumber(value: safeIgnitionTime), forKey: "u_ignitionTime")
                         }
                         
