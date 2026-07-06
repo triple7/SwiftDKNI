@@ -168,7 +168,8 @@ extension CMEGeometryBuilder {
             material.diffuse.contents = dummyTex
             material.ambient.contents = dummyTex
             material.specular.contents = dummyTex
-            let fileManager = FileManager.default
+        material.transparent.contents = dummyTex
+        let fileManager = FileManager.default
             let docsDir = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
             let starsDirectoryURL = docsDir.appendingPathComponent("stars")
             
@@ -228,6 +229,7 @@ extension CMEGeometryBuilder {
             
             let node = SCNNode(geometry: geometry)
             node.categoryBitMask = 2
+        node.renderingOrder = 10
             return node
         }
     
