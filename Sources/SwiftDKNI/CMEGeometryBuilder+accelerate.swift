@@ -187,19 +187,14 @@ extension CMEGeometryBuilder {
         let twinkleData = Data(bytes: &defaultTwinkle, count: MemoryLayout<Float>.size)
         material.setValue(twinkleData, forKey: "u_twinkleSpeed")
 
-        // --- Inject Thermal Color Defaults ---
+        // --- Inject Thermal Color Defaults
+        let coreColor = SCNVector3(1.0, 0.95, 0.8)
+        material.setValue(NSValue(scnVector3: coreColor), forKey: "u_coreColor")
+        let midColor = SCNVector3(1.0, 0.4, 0.0)
+        material.setValue(NSValue(scnVector3: midColor), forKey: "u_midColor")
+        let edgeColor = SCNVector3(0.4, 0.02, 0.0)
+        material.setValue(NSValue(scnVector3: edgeColor), forKey: "u_edgeColor")
 
-        var defaultCoreColor = simd_float3(1.0, 0.95, 0.8)
-        let coreColorData = Data(bytes: &defaultCoreColor, count: MemoryLayout<simd_float3>.size)
-        material.setValue(coreColorData, forKey: "u_coreColor")
-
-        var defaultMidColor = simd_float3(1.0, 0.4, 0.0)
-        let midColorData = Data(bytes: &defaultMidColor, count: MemoryLayout<simd_float3>.size)
-        material.setValue(midColorData, forKey: "u_midColor")
-
-        var defaultEdgeColor = simd_float3(0.4, 0.02, 0.0)
-        let edgeColorData = Data(bytes: &defaultEdgeColor, count: MemoryLayout<simd_float3>.size)
-        material.setValue(edgeColorData, forKey: "u_edgeColor")
         let fileManager = FileManager.default
         let docsDir = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
         let starsDirectoryURL = docsDir.appendingPathComponent("stars")
