@@ -183,7 +183,7 @@ extension CMEGeometryBuilder {
                 // 1. ATTACH THE SHADERS FIRST
                 material.shaderModifiers = [
                     .geometry: geometryShader,
-                    .fragment: fragmentShader // Kept .fragment for continuity
+                    .surface: fragmentShader // Kept .fragment for continuity
                 ]
                 
                 // 2. INJECT THE UNIFORMS SECOND
