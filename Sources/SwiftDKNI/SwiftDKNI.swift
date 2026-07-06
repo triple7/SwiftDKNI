@@ -49,6 +49,7 @@ extension SwiftDKNI {
     ///   - endTime: The end date string (yyyy-MM-dd).
     /// - Returns: An SCNNode containing all aligned CME child nodes.
     public func generateCoronalSurfaceUsingMegnetoGram(
+        device: MTLDevice,
                 sphere: SCNSphere,
                 maxPointsPerCME: Int = 125000, // 🚨 Replaced pointsPerEvent with the global cap
                 startTime: String,
@@ -136,8 +137,17 @@ extension SwiftDKNI {
                         
                         if let material = cmeNode.geometry?.materials.first {
                             material.setValue(NSNumber(value: safeIgnitionTime), forKey: "u_ignitionTime")
+
+                            // Add the magnetic voxel cube for spatial vector
+                            if let magneticVolume = generateMagneticVolumeTexture(
+                                device: device,
+                                lines: openMagneticLines,
+                                solarRadius: Float(sphere.radius)
+                            ) {
+                                let volumeProperty = SCNMaterialProperty(contents: magneticVolume)
+                                material.setValue(volumeProperty, forKey: "u_magneticVolume")
+                            }
                         }
-                        
                         coronalSurfaceNode.addChildNode(cmeNode)
                     }
                 }
@@ -225,6 +235,7 @@ extension SwiftDKNI {
                 
                 return coronalSurfaceNode
             }
+
     public func addDistortionTechniqueToScene(sceneView: SCNView) {
         let techniqueDict: [String: Any] = [
             "symbols": [
