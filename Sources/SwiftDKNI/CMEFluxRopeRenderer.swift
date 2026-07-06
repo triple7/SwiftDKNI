@@ -49,6 +49,8 @@ final public class CMEFluxRopeRenderer: Sendable {
         material.diffuse.contents = UIColor.white
 #endif
         material.diffuse.mappingChannel = 0
+        material.transparent.mappingChannel = 0
+
         
         let fileManager = FileManager.default
         let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -63,32 +65,28 @@ final public class CMEFluxRopeRenderer: Sendable {
         ]
         
         // --- 🚨 CRITICAL BLEND & DEPTH FIXES ---
-        material.blendMode = .alpha
+        material.blendMode = .add
         material.lightingModel = .constant
         
         // Must read from depth buffer so the sun occludes particles behind it!
         material.readsFromDepthBuffer = true
         material.writesToDepthBuffer = false
         material.isDoubleSided = true
-        // ---------------------------------------
         
-        let thickness: Float = 0.3
-        material.setValue(thickness, forKey: "u_thickness")
-        
-        let initialTime: Float = 0.0
-        material.setValue(initialTime, forKey: "u_globalTime")
-        
-        let ignitionTime: Float = 0.0
-        material.setValue(ignitionTime, forKey: "u_ignitionTime")
+        // 3. Safely box Floats for SceneKit KVC
+        material.setValue(NSNumber(value: 0.3), forKey: "u_thickness")
+        material.setValue(NSNumber(value: 0.0), forKey: "u_globalTime")
+        material.setValue(NSNumber(value: 0.0), forKey: "u_ignitionTime")
         
         let visualSpeedScale: Float = 0.001
         let scaledSpeed = Float(event.speed) * visualSpeedScale
-        material.setValue(scaledSpeed, forKey: "u_speed")
+        material.setValue(NSNumber(value: scaledSpeed), forKey: "u_speed")
         
         material.setValue(NSNumber(value: solarRadius), forKey: "u_solarRadius")
-        let halfAngleRad = Float(event.halfAngle ?? 45.0) * .pi / 180.0
-        material.setValue(halfAngleRad, forKey: "u_halfAngle")
         
+        let halfAngleRad = Float(event.halfAngle ?? 45.0) * .pi / 180.0
+        material.setValue(NSNumber(value: halfAngleRad), forKey: "u_halfAngle")
+
         geometry.materials = [material]
         
         let node = SCNNode(geometry: geometry)
