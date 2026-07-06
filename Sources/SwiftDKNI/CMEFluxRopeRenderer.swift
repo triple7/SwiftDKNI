@@ -74,19 +74,25 @@ final public class CMEFluxRopeRenderer: Sendable {
         material.isDoubleSided = true
         
         // 3. Safely box Floats for SceneKit KVC
-        material.setValue(NSNumber(value: 0.3), forKey: "u_thickness")
-        material.setValue(NSNumber(value: 0.0), forKey: "u_globalTime")
-        material.setValue(NSNumber(value: Float(0.0)), forKey: "u_ignitionTime")
         
-        let visualSpeedScale: Float = 0.001
-        let scaledSpeed = Float(event.speed) * visualSpeedScale
-        material.setValue(NSNumber(value: scaledSpeed), forKey: "u_speed")
+        var thicknessFloat: Float = 0.3
+        material.setValue(Data(bytes: &thicknessFloat, count: MemoryLayout<Float>.size), forKey: "u_thickness")
         
-        material.setValue(NSNumber(value: solarRadius), forKey: "u_solarRadius")
+        var initialTimeFloat: Float = 0.0
+        material.setValue(Data(bytes: &initialTimeFloat, count: MemoryLayout<Float>.size), forKey: "u_globalTime")
         
-        let halfAngleRad = Float(event.halfAngle ?? 45.0) * .pi / 180.0
-        material.setValue(NSNumber(value: halfAngleRad), forKey: "u_halfAngle")
-
+        var ignitionTimeFloat: Float = 0.0
+        material.setValue(Data(bytes: &ignitionTimeFloat, count: MemoryLayout<Float>.size), forKey: "u_ignitionTime")
+        
+        var visualSpeedScale: Float = 0.001
+        var scaledSpeedFloat: Float = Float(event.speed) * visualSpeedScale
+        material.setValue(Data(bytes: &scaledSpeedFloat, count: MemoryLayout<Float>.size), forKey: "u_speed")
+        
+        var solarRadiusFloat: Float = solarRadius
+        material.setValue(Data(bytes: &solarRadiusFloat, count: MemoryLayout<Float>.size), forKey: "u_solarRadius")
+        
+        var halfAngleFloat: Float = Float(event.halfAngle ?? 45.0) * .pi / 180.0
+        material.setValue(Data(bytes: &halfAngleFloat, count: MemoryLayout<Float>.size), forKey: "u_halfAngle")
         geometry.materials = [material]
         
         let node = SCNNode(geometry: geometry)
