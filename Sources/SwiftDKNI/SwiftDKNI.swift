@@ -108,6 +108,14 @@ extension SwiftDKNI {
                 
                 // 4. Generate and align each CME event ONLY if the flag is true
                 if renderCME {
+                    // 🚨 GENERATE THE TEXTURE ONCE BEFORE THE LOOP
+                    print("Generating shared 3D Magnetic Volume...")
+                    let sharedMagneticVolume = generateMagneticVolumeTexture(
+                        device: device,
+                        lines: openMagneticLines,
+                        solarRadius: Float(sphere.radius)
+                    )
+
                     // 🚨 DYNAMIC THROTTLE: Distribute the max points across all active events to prevent vertex overflow
                     let calculatedPointsPerEvent = max(500, maxPointsPerCME / max(1, events.count))
                     
@@ -138,15 +146,8 @@ extension SwiftDKNI {
                         if let material = cmeNode.geometry?.materials.first {
                             material.setValue(NSNumber(value: safeIgnitionTime), forKey: "u_ignitionTime")
 
-                            // Add the magnetic voxel cube for spatial vector
-                            if let magneticVolume = generateMagneticVolumeTexture(
-                                device: device,
-                                lines: openMagneticLines,
-                                solarRadius: Float(sphere.radius)
-                            ) {
-                                let volumeProperty = SCNMaterialProperty(contents: magneticVolume)
+                                let volumeProperty = SCNMaterialProperty(contents: sharedMagneticVolume)
                                 material.setValue(volumeProperty, forKey: "u_magneticVolume")
-                            }
                         }
                         coronalSurfaceNode.addChildNode(cmeNode)
                     }
