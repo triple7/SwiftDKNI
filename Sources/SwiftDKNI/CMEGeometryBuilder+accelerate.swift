@@ -168,7 +168,7 @@ extension CMEGeometryBuilder {
             material.diffuse.contents = dummyTex
             material.ambient.contents = dummyTex
             material.specular.contents = dummyTex
-            
+        material.transparent.contents = dummyTex
             let fileManager = FileManager.default
             let docsDir = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
             let starsDirectoryURL = docsDir.appendingPathComponent("stars")
