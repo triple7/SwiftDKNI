@@ -31,6 +31,7 @@ final public class CMEFluxRopeRenderer: Sendable {
                 eventLatitude: Float(event.latitude ?? 0.0),
                 eventLongitude: Float(event.longitude ?? 0.0),
                 eventHalfAngle: Float(event.halfAngle ?? 45.0),
+                eventSpeed: Float(event.speed),
                 openLines: openLines,
                 pointCount: pointCount,
                 solarRadius: solarRadius
@@ -39,6 +40,25 @@ final public class CMEFluxRopeRenderer: Sendable {
             // ADDED: Prevent the CPU from aggressively culling the geometry
             let bound = CGFloat(solarRadius * 10.0)
             geometry.boundingBox = (min: SCNVector3(-bound, -bound, -bound), max: SCNVector3(bound, bound, bound))
+  
+//            let material = SCNMaterial()
+//
+//            // 1. Give it a blaring debug color (Neon Green or Red works best)
+//            #if os(macOS)
+//            material.diffuse.contents = NSColor.systemGreen
+//            #else
+//            material.diffuse.contents = UIColor.systemGreen
+//            #endif
+//
+//            // 4. Set Fill Mode to lines so you can see the two triangles making up each quad
+//            material.fillMode = .lines // Change to .fill if you just want solid green squares
+//
+//            material.lightingModel = .constant
+//            material.readsFromDepthBuffer = true // Turn this back on so they don't draw through the sun
+//            material.writesToDepthBuffer = true
+//            material.isDoubleSided = true
+//
+//            geometry.materials = [material]
             
             let material = SCNMaterial()
             
