@@ -152,7 +152,6 @@ extension SwiftDKNI {
 
                             // Bind the shared PFSS texture
                             if let magneticVolume = sharedMagneticVolume {
-                                print("generateCoronalSurfaceUsingMegnetoGram: Added voxel volume")
                                 let volumeProperty = SCNMaterialProperty(contents: magneticVolume)
                                 material.setValue(volumeProperty, forKey: "u_magneticVolume")
                             }
