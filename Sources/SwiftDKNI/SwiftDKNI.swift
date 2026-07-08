@@ -293,8 +293,18 @@ extension SwiftDKNI {
                     )
                     
                     if let material = cmeNode.geometry?.materials.first {
-                        material.setValue(NSNumber(value: safeIgnitionTime), forKey: "u_ignitionTime")
+//                        material.setValue(NSNumber(value: safeIgnitionTime), forKey: "u_ignitionTime")
 
+                        // TODO: DIAGNOSTIC: Force all CMEs to erupt simultaneously at t=0
+                        material.setValue(NSNumber(value: 0.0), forKey: "u_ignitionTime")
+                        
+                        //  FAIL-SAFE: Explicitly bind the missing sizing parameters
+                        material.setValue(NSNumber(value: sRadius), forKey: "u_solarRadius")
+                        material.setValue(NSNumber(value: 2.0), forKey: "u_thickness") // Boosted for visibility
+                        material.setValue(NSNumber(value: event.speed ?? 500.0), forKey: "u_speed")
+                        material.setValue(NSNumber(value: event.halfAngle ?? 20.0), forKey: "u_halfAngle")
+
+                        
                         // Bind the pre-allocated material property containing our 3D texture
                         if let vp = sharedVolumeProperty {
                             material.setValue(vp, forKey: "u_magneticVolume")
