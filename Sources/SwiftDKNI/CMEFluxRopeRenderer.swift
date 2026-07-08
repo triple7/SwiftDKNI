@@ -75,24 +75,22 @@ final public class CMEFluxRopeRenderer: Sendable {
         
         // 3. Safely box Floats for SceneKit KVC
         
-        var thicknessFloat: Float = 0.3
-        material.setValue(Data(bytes: &thicknessFloat, count: MemoryLayout<Float>.size), forKey: "u_thickness")
+        material.setValue(NSNumber(value: 0.3), forKey: "u_thickness")
         
-        var initialTimeFloat: Float = 0.0
-        material.setValue(Data(bytes: &initialTimeFloat, count: MemoryLayout<Float>.size), forKey: "u_globalTime")
+        // Hardcoded to 5.0 for your test.
+        // TODO: map to sceneKit time
+        material.setValue(NSNumber(value: 5.0), forKey: "u_globalTime")
         
-        var ignitionTimeFloat: Float = 0.0
-        material.setValue(Data(bytes: &ignitionTimeFloat, count: MemoryLayout<Float>.size), forKey: "u_ignitionTime")
+        material.setValue(NSNumber(value: 0.0), forKey: "u_ignitionTime")
         
-        var visualSpeedScale: Float = 0.001
-        var scaledSpeedFloat: Float = Float(event.speed) * visualSpeedScale
-        material.setValue(Data(bytes: &scaledSpeedFloat, count: MemoryLayout<Float>.size), forKey: "u_speed")
+        let visualSpeedScale: Float = 0.001
+        let scaledSpeedFloat = Float(event.speed) * visualSpeedScale
+        material.setValue(NSNumber(value: scaledSpeedFloat), forKey: "u_speed")
         
-        var solarRadiusFloat: Float = solarRadius
-        material.setValue(Data(bytes: &solarRadiusFloat, count: MemoryLayout<Float>.size), forKey: "u_solarRadius")
+        material.setValue(NSNumber(value: solarRadius), forKey: "u_solarRadius")
         
-        var halfAngleFloat: Float = Float(event.halfAngle ?? 45.0) * .pi / 180.0
-        material.setValue(Data(bytes: &halfAngleFloat, count: MemoryLayout<Float>.size), forKey: "u_halfAngle")
+        let halfAngleFloat = Float(event.halfAngle ?? 45.0) * .pi / 180.0
+        material.setValue(NSNumber(value: halfAngleFloat), forKey: "u_halfAngle")
         geometry.materials = [material]
         
         let node = SCNNode(geometry: geometry)

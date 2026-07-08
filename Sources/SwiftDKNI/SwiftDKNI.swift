@@ -143,7 +143,7 @@ extension SwiftDKNI {
                         let cmeNode = try! renderer.createCoronalEjectionNode(
                             for: event,
                             openLines: openMagneticLines,
-                            pointCount: calculatedPointsPerEvent, // 🚨 Pass the dynamically calculated limit
+                            pointCount: calculatedPointsPerEvent, //  Pass the dynamically calculated limit
                             solarRadius: Float(sphere.radius)
                         )
                         

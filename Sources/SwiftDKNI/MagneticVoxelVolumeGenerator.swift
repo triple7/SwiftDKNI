@@ -230,7 +230,7 @@ public func generateVolumetricFieldFromBuckets(
     
     let voxelCount = resolution * resolution * resolution
     let gridBounds: Float = solarRadius * 3.0
-    print("generateVolumetricFieldFromBuckets: creating \(voxelCount) voxel cube with radius \(gridBounds) radius")
+    print("generateVolumetricFieldFromBuckets: creating \(voxelCount) voxel cube with radius \(gridBounds).")
     let startVolume = CACurrentMediaTime()
     // --- 1. ACCELERATE: FLAT COORDINATE ARRAYS ---
     let start = -gridBounds
