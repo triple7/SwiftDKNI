@@ -41,6 +41,92 @@ final public class SwiftDKNI: Sendable {
 // MARK: - Surface Generation Extension
 extension SwiftDKNI {
     
+    private func applySolarSurfaceMaterials(
+            to sphere: SCNSphere,
+            cachedIfExists: Bool = true
+        ) async throws {
+            // 1. Fetch the active regions
+            let noaaService = NOAADataService()
+            let activeRegions = try await noaaService.fetchActiveRegions(cachedIfExists: cachedIfExists)
+            
+            // 2. Generate the surface layers
+            guard let sunspotMask = generateSunspotTexture(from: activeRegions, textureSize: CGSize(width: 4096, height: 2048)),
+                  let baseMaterial = sphere.materials.first else {
+                return
+            }
+            
+            baseMaterial.lightingModel = .constant
+            let sdoService = NASASDOService()
+            
+            // --- LAYER 1: Core Surface Plasma (AIA 171) ---
+            if let liveSunTexture = try? await sdoService.fetchLatestImage(wavelength: .aia171, resolution: 4096, cachedIfExists: cachedIfExists) {
+                baseMaterial.diffuse.contents = liveSunTexture
+            }
+            
+            // --- LAYER 2: Active Regions Mask (NOAA) ---
+            baseMaterial.multiply.contents = sunspotMask
+            baseMaterial.multiply.intensity = 0.85
+            
+            // --- LAYER 3: Atmospheric Coronal Holes (AIA 193) ---
+            if let coronalHoleMask = try? await sdoService.fetchLatestImage(wavelength: .aia193, resolution: 4096, cachedIfExists: cachedIfExists) {
+                baseMaterial.transparent.contents = coronalHoleMask
+            } else {
+    #if os(macOS)
+                baseMaterial.transparent.contents = NSColor.white
+    #else
+                baseMaterial.transparent.contents = UIColor.white
+    #endif
+            }
+            
+            // --- SHADER 1: The Geometry Swirl ---
+            let plasmaSwirlShader = """
+                #pragma body
+                
+                float flowTime = u_time * 0.15;
+                
+                float warpX = (sin(_geometry.texcoords[0].y * 12.0 + flowTime) 
+                             + sin(_geometry.texcoords[0].y * 28.0 - flowTime * 1.5)) * 0.003;
+                                                             
+                float warpY = (cos(_geometry.texcoords[0].x * 14.0 - flowTime) 
+                             + cos(_geometry.texcoords[0].x * 24.0 + flowTime * 1.2)) * 0.003;
+                
+                _geometry.texcoords[0].x += warpX;
+                _geometry.texcoords[0].y += warpY;
+                """
+            
+            // --- SHADER 2: Multi-Band Atmosphere Composite ---
+            let multiBandSolarShader = """
+                #pragma transparent
+                #pragma body
+                
+                // 1. Sample the primary surface texture (NOAA / Core Plasma)
+                float4 surfaceColor = _surface.diffuse;
+                
+                // 2. Read the secondary NASA SDO Band texture 
+                float4 uvBandSample = _surface.transparent;
+                float uvIntensity = dot(uvBandSample.rgb, float3(0.299, 0.587, 0.114));
+                
+                // 3. Mathematical Fresnel Profile for the Limb Glow
+                float3 N = normalize(_surface.normal);
+                float3 V = normalize(_surface.view);
+                float edgeFactor = 1.0 - max(0.0, dot(N, V));
+                
+                float atmosphericHaze = pow(edgeFactor, 6.0);
+                
+                // Blend the UV Band Data into the Haze
+                float3 atmosphereColor = float3(0.98, 0.90, 0.75); 
+                float finalAtmosphereOpacity = atmosphericHaze * (0.2 + uvIntensity * 0.8);
+                
+                _surface.diffuse.rgb = mix(surfaceColor.rgb, atmosphereColor, finalAtmosphereOpacity * 0.35);
+                _surface.diffuse.rgb += _surface.emission.rgb;
+                """
+            
+            baseMaterial.shaderModifiers = [
+                .geometry: plasmaSwirlShader,
+                .surface: multiBandSolarShader
+            ]
+        }
+    
     /// Fetches, generates, and time-aligns all CME events into a single container node.
     /// - Parameters:
     ///   - sphere: The central SCNSphere whose radius dictates the starting boundary.
@@ -167,6 +253,8 @@ extension SwiftDKNI {
                 coronalSurfaceNode.addChildNode(globalMagneticNode)
             }
             
+            var firstIgnitionTime: Float? = nil
+            
             // 4. Generate and align each CME event ONLY if the flag is true
             if renderCME {
                 // Create the SceneKit wrapper once outside the loop to protect memory channels
@@ -192,6 +280,11 @@ extension SwiftDKNI {
                     let realIgnitionOffset = eventDate.timeIntervalSince(simulationStart)
                     let safeIgnitionTime = Float(realIgnitionOffset * compressionRatio)
                     
+                    // Track the earliest ignition for the static timeline debugger
+                    if firstIgnitionTime == nil || safeIgnitionTime < firstIgnitionTime! {
+                        firstIgnitionTime = safeIgnitionTime
+                    }
+                    
                     let cmeNode = try! renderer.createCoronalEjectionNode(
                         for: event,
                         openLines: openMagneticLines,
@@ -211,90 +304,24 @@ extension SwiftDKNI {
                 }
             }
             
-            // 5. Fetch the active regions
-            let noaaService = NOAADataService()
-            let activeRegions = try await noaaService.fetchActiveRegions(cachedIfExists: cachedIfExists)
+            // 5. Apply Solar Surface Materials (NOAA + NASA SDO Composite)
+            try await applySolarSurfaceMaterials(to: sphere, cachedIfExists: cachedIfExists)
             
-            // Generate the surface layers
-            if let sunspotMask = generateSunspotTexture(from: activeRegions, textureSize: CGSize(width: 4096, height: 2048)) {
-                if let baseMaterial = sphere.materials.first {
-                    
-                    baseMaterial.lightingModel = .constant
-                    let sdoService = NASASDOService()
-                    
-                    // --- LAYER 1: Core Surface Plasma (AIA 171) ---
-                    if let liveSunTexture = try? await sdoService.fetchLatestImage(wavelength: .aia171, resolution: 4096, cachedIfExists: cachedIfExists) {
-                        baseMaterial.diffuse.contents = liveSunTexture
+            // --- STATIC TIMELINE DEBUGGER ---
+            if let firstEventTime = firstIgnitionTime {
+                // We set the global clock to exactly 5 visual seconds after the first CME erupts
+                let debugGlobalTime = firstEventTime + 5.0
+                print("⏱️ Static Timeline Set: Earliest CME ignited at \(firstEventTime)s. Fast-forwarding to \(debugGlobalTime)s.")
+                
+                coronalSurfaceNode.childNodes.forEach { node in
+                    if let material = node.geometry?.materials.first, material.value(forKey: "u_ignitionTime") != nil {
+                        material.setValue(NSNumber(value: debugGlobalTime), forKey: "u_globalTime")
                     }
-                    
-                    // --- LAYER 2: Active Regions Mask (NOAA) ---
-                    baseMaterial.multiply.contents = sunspotMask
-                    baseMaterial.multiply.intensity = 0.85
-                    
-                    // --- LAYER 3: Atmospheric Coronal Holes (AIA 193) ---
-                    if let coronalHoleMask = try? await sdoService.fetchLatestImage(wavelength: .aia193, resolution: 4096, cachedIfExists: cachedIfExists) {
-                        baseMaterial.transparent.contents = coronalHoleMask
-                    } else {
-        #if os(macOS)
-                        baseMaterial.transparent.contents = NSColor.white
-        #else
-                        baseMaterial.transparent.contents = UIColor.white
-        #endif
-                    }
-                    
-                    // --- SHADER 1: The Geometry Swirl ---
-                    let plasmaSwirlShader = """
-                        #pragma body
-                        
-                        float flowTime = u_time * 0.15;
-                        
-                        float warpX = (sin(_geometry.texcoords[0].y * 12.0 + flowTime) 
-                                     + sin(_geometry.texcoords[0].y * 28.0 - flowTime * 1.5)) * 0.003;
-                                                                     
-                        float warpY = (cos(_geometry.texcoords[0].x * 14.0 - flowTime) 
-                                     + cos(_geometry.texcoords[0].x * 24.0 + flowTime * 1.2)) * 0.003;
-                        
-                        _geometry.texcoords[0].x += warpX;
-                        _geometry.texcoords[0].y += warpY;
-                        """
-                    
-                    // --- SHADER 2: Multi-Band Atmosphere Composite ---
-                    let multiBandSolarShader = """
-                        #pragma transparent
-                        #pragma body
-                        
-                        // 1. Sample the primary surface texture (NOAA / Core Plasma)
-                        float4 surfaceColor = _surface.diffuse;
-                        
-                        // 2. Read the secondary NASA SDO Band texture 
-                        float4 uvBandSample = _surface.transparent;
-                        float uvIntensity = dot(uvBandSample.rgb, float3(0.299, 0.587, 0.114));
-                        
-                        // 3. Mathematical Fresnel Profile for the Limb Glow
-                        float3 N = normalize(_surface.normal);
-                        float3 V = normalize(_surface.view);
-                        float edgeFactor = 1.0 - max(0.0, dot(N, V));
-                        
-                        float atmosphericHaze = pow(edgeFactor, 6.0);
-                        
-                        // Blend the UV Band Data into the Haze
-                        float3 atmosphereColor = float3(0.98, 0.90, 0.75); 
-                        float finalAtmosphereOpacity = atmosphericHaze * (0.2 + uvIntensity * 0.8);
-                        
-                        _surface.diffuse.rgb = mix(surfaceColor.rgb, atmosphereColor, finalAtmosphereOpacity * 0.35);
-                        _surface.diffuse.rgb += _surface.emission.rgb;
-                        """
-                    
-                    baseMaterial.shaderModifiers = [
-                        .geometry: plasmaSwirlShader,
-                        .surface: multiBandSolarShader
-                    ]
                 }
             }
             
             return coronalSurfaceNode
         }
-
     public func addDistortionTechniqueToScene(sceneView: SCNView) {
         let techniqueDict: [String: Any] = [
             "symbols": [
