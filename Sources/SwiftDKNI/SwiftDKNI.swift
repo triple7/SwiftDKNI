@@ -329,9 +329,20 @@ extension SwiftDKNI {
                     }
                 }
             }
-            
+
+            // --- STATIC TIMELINE DEBUGGER ---
+                    //  OVERRIDE: Force the global clock to exactly 5.0 seconds
+                    let debugGlobalTime: Float = 5.0
+                    print("⏱️ Diagnostic Override: Forcing global clock to \(debugGlobalTime)s for all CMEs.")
+                    
+                    coronalSurfaceNode.childNodes.forEach { node in
+                        if let material = node.geometry?.materials.first, material.value(forKey: "u_ignitionTime") != nil {
+                            material.setValue(NSNumber(value: debugGlobalTime), forKey: "u_globalTime")
+                        }
+                    }
             return coronalSurfaceNode
         }
+
     public func addDistortionTechniqueToScene(sceneView: SCNView) {
         let techniqueDict: [String: Any] = [
             "symbols": [
