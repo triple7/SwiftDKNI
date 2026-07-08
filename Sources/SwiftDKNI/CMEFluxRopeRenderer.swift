@@ -75,13 +75,9 @@ final public class CMEFluxRopeRenderer: Sendable {
         
         // 3. Safely box Floats for SceneKit KVC
         
-        material.setValue(NSNumber(value: 0.3), forKey: "u_thickness")
-        
-        // Hardcoded to 5.0 for your test.
-        // TODO: map to sceneKit time
-        material.setValue(NSNumber(value: 5.0), forKey: "u_globalTime")
-        
-        material.setValue(NSNumber(value: 0.0), forKey: "u_ignitionTime")
+        material.setValue(NSNumber(value: Float(0.3)), forKey: "u_thickness")
+        material.setValue(NSNumber(value: Float(5.0)), forKey: "u_globalTime")
+        material.setValue(NSNumber(value: Float(0.0)), forKey: "u_ignitionTime")
         
         let visualSpeedScale: Float = 0.001
         let scaledSpeedFloat = Float(event.speed) * visualSpeedScale
@@ -91,6 +87,7 @@ final public class CMEFluxRopeRenderer: Sendable {
         
         let halfAngleFloat = Float(event.halfAngle ?? 45.0) * .pi / 180.0
         material.setValue(NSNumber(value: halfAngleFloat), forKey: "u_halfAngle")
+
         geometry.materials = [material]
         
         let node = SCNNode(geometry: geometry)
