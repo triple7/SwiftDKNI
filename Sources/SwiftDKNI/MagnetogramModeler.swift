@@ -185,68 +185,33 @@ public final class MagnetogramModeler: @unchecked Sendable {
     
     // MARK: - 4. PFSS Modeling & Magnetic Integration
     private func extractActiveRegions(from data: MagnetogramData, thresholdGauss: Float = 40.0) -> (positive: [MagneticRegion], negative: [MagneticRegion], regionalTwists: [String: simd_float2]) {
-        
-        print("\n=== MAGNETIC FIELD ANALYSIS ===")
-        
-        let gridSize = 40
-        let bucketsX = (data.width + gridSize - 1) / gridSize
-        let bucketsY = (data.height + gridSize - 1) / gridSize
-        let totalBuckets = bucketsX * bucketsY
-        
-        print("1. Grid Size: \(gridSize)x\(gridSize) pixels")
-        print("2. Total Analysis Buckets: \(totalBuckets)")
-        print("3. Minimum Threshold: > \(thresholdGauss)G")
-        
-        var bucketResults = [MagneticRegion?](repeating: nil, count: totalBuckets)
-        var bucketTwists = [simd_float2?](repeating: nil, count: totalBuckets)
-        
-        DispatchQueue.concurrentPerform(iterations: totalBuckets) { i in
-            let bx = i % bucketsX
-            let by = i / bucketsX
             
-            let startX = bx * gridSize
-            let startY = by * gridSize
-            let endX = min(startX + gridSize, data.width)
-            let endY = min(startY + gridSize, data.height)
+            print("\n=== MAGNETIC FIELD ANALYSIS ===")
             
-            var localMaxAbsFlux: Float = 0.0
-            var localPeakX = startX
-            var localPeakY = startY
-            var localPeakFlux: Float = 0.0
+            let gridSize = 40
+            let bucketsX = (data.width + gridSize - 1) / gridSize
+            let bucketsY = (data.height + gridSize - 1) / gridSize
+            let totalBuckets = bucketsX * bucketsY
             
-            for cy in startY..<endY {
-                let rowOffset = cy * data.width
-                for cx in startX..<endX {
-                    let index = rowOffset + cx
-                    let flux = data.fluxArray[index]
-                    
-                    if !flux.isNaN {
-                        let absFlux = abs(flux)
-                        if absFlux > localMaxAbsFlux {
-                            localMaxAbsFlux = absFlux
-                            localPeakFlux = flux
-                            localPeakX = cx
-                            localPeakY = cy
-                        }
-                    }
-                }
-            }
+            print("1. Grid Size: \(gridSize)x\(gridSize) pixels")
+            print("2. Total Analysis Buckets: \(totalBuckets)")
             
-            if localMaxAbsFlux > thresholdGauss {
-                let lon = (Float(localPeakX) / Float(data.width)) * 360.0 - 180.0
-                // 2. Latitude requires Inverse Sine (Arcsin) for HMI Synoptic Maps
-                // Normalize Y to the -1.0 to 1.0 range (representing sin(lat))
-                let sinLat = (Float(localPeakY) / Float(data.height - 1)) * 2.0 - 1.0
-
-                // Calculate true latitude in radians, then convert back to degrees for your pipeline
-                let latRad = asin(max(-1.0, min(1.0, sinLat)))
-                let lat = latRad * 180.0 / .pi
-
-                bucketResults[i] = MagneticRegion(centroidLat: lat, centroidLon: lon, fluxIntensity: localPeakFlux, isPositive: localPeakFlux > 0)
+            var bucketResults = [MagneticRegion?](repeating: nil, count: totalBuckets)
+            var bucketTwists = [simd_float2?](repeating: nil, count: totalBuckets)
+            
+            DispatchQueue.concurrentPerform(iterations: totalBuckets) { i in
+                let bx = i % bucketsX
+                let by = i / bucketsX
                 
-                // Calculate the regional magnetic moment (Helicity)
-                var momentX: Float = 0.0
-                var momentY: Float = 0.0
+                let startX = bx * gridSize
+                let startY = by * gridSize
+                let endX = min(startX + gridSize, data.width)
+                let endY = min(startY + gridSize, data.height)
+                
+                var localMaxAbsFlux: Float = 0.0
+                var localPeakX = startX
+                var localPeakY = startY
+                var localPeakFlux: Float = 0.0
                 
                 for cy in startY..<endY {
                     let rowOffset = cy * data.width
@@ -255,65 +220,106 @@ public final class MagnetogramModeler: @unchecked Sendable {
                         let flux = data.fluxArray[index]
                         
                         if !flux.isNaN {
-                            // Weight the distance from the peak by the absolute flux
-                            let dx = Float(cx - localPeakX)
-                            let dy = Float(cy - localPeakY)
-                            momentX += dx * abs(flux)
-                            momentY += dy * abs(flux)
+                            let absFlux = abs(flux)
+                            if absFlux > localMaxAbsFlux {
+                                localMaxAbsFlux = absFlux
+                                localPeakFlux = flux
+                                localPeakX = cx
+                                localPeakY = cy
+                            }
                         }
                     }
                 }
                 
-                var twist = simd_float2(momentX, momentY)
-                if simd_length(twist) > 0.001 {
-                    twist = simd_normalize(twist)
-                } else {
-                    twist = simd_float2(1.0, 0.0) // Fallback for perfectly uniform points
+                // 🚨 STRATIFIED GENERATION: Calculate True Latitude using Arcsin
+                let sinLat = (Float(localPeakY) / Float(data.height - 1)) * 2.0 - 1.0
+                let latRad = asin(max(-1.0, min(1.0, sinLat)))
+                let trueLat = latRad * 180.0 / .pi
+                
+                // Define Geographic Zones (Royal Zone vs Poles)
+                let isPolar = abs(trueLat) > 55.0
+                let dynamicThreshold: Float = isPolar ? 10.0 : thresholdGauss
+                
+                if localMaxAbsFlux > dynamicThreshold {
+                    let lon = (Float(localPeakX) / Float(data.width)) * 360.0 - 180.0
+                    
+                    bucketResults[i] = MagneticRegion(centroidLat: trueLat, centroidLon: lon, fluxIntensity: localPeakFlux, isPositive: localPeakFlux > 0)
+                    
+                    // Calculate the regional magnetic moment (Helicity)
+                    var momentX: Float = 0.0
+                    var momentY: Float = 0.0
+                    
+                    for cy in startY..<endY {
+                        let rowOffset = cy * data.width
+                        for cx in startX..<endX {
+                            let index = rowOffset + cx
+                            let flux = data.fluxArray[index]
+                            
+                            if !flux.isNaN {
+                                let dx = Float(cx - localPeakX)
+                                let dy = Float(cy - localPeakY)
+                                momentX += dx * abs(flux)
+                                momentY += dy * abs(flux)
+                            }
+                        }
+                    }
+                    
+                    var twist = simd_float2(momentX, momentY)
+                    if simd_length(twist) > 0.001 {
+                        twist = simd_normalize(twist)
+                    } else {
+                        twist = simd_float2(1.0, 0.0)
+                    }
+                    
+                    bucketTwists[i] = twist
                 }
-                
-                bucketTwists[i] = twist
             }
-        }
-        
-        var posRegions: [MagneticRegion] = []
-        var negRegions: [MagneticRegion] = []
-        var regionalTwists: [String: simd_float2] = [:]
-        
-        for i in 0..<totalBuckets {
-            if let region = bucketResults[i], let twist = bucketTwists[i] {
-                if region.isPositive { posRegions.append(region) }
-                else { negRegions.append(region) }
-                
-                // Create a unique key using the region's coordinates to map the twist
-                let key = "\(region.centroidLat)_\(region.centroidLon)"
-                regionalTwists[key] = twist
+            
+            var posRegions: [MagneticRegion] = []
+            var negRegions: [MagneticRegion] = []
+            var regionalTwists: [String: simd_float2] = [:]
+            
+            for i in 0..<totalBuckets {
+                if let region = bucketResults[i], let twist = bucketTwists[i] {
+                    if region.isPositive { posRegions.append(region) }
+                    else { negRegions.append(region) }
+                    
+                    let key = "\(region.centroidLat)_\(region.centroidLon)"
+                    regionalTwists[key] = twist
+                }
             }
+            
+            // 🚨 TARGETED GEOGRAPHIC SAFETY CAPS
+            var equatorialPos = posRegions.filter { abs($0.centroidLat) <= 55.0 }
+            var polarPos      = posRegions.filter { abs($0.centroidLat) >  55.0 }
+            var equatorialNeg = negRegions.filter { abs($0.centroidLat) <= 55.0 }
+            var polarNeg      = negRegions.filter { abs($0.centroidLat) >  55.0 }
+            
+            // Sort by intensity
+            equatorialPos.sort { abs($0.fluxIntensity) > abs($1.fluxIntensity) }
+            polarPos.sort      { abs($0.fluxIntensity) > abs($1.fluxIntensity) }
+            equatorialNeg.sort { abs($0.fluxIntensity) > abs($1.fluxIntensity) }
+            polarNeg.sort      { abs($0.fluxIntensity) > abs($1.fluxIntensity) }
+            
+            let maxEquatorial = 120
+            let maxPolar = 30
+            
+            equatorialPos = Array(equatorialPos.prefix(maxEquatorial))
+            polarPos      = Array(polarPos.prefix(maxPolar))
+            equatorialNeg = Array(equatorialNeg.prefix(maxEquatorial))
+            polarNeg      = Array(polarNeg.prefix(maxPolar))
+            
+            let finalPosRegions = equatorialPos + polarPos
+            let finalNegRegions = equatorialNeg + polarNeg
+            
+            print("3. Final Stratified Regions: \(finalPosRegions.count) Positive, \(finalNegRegions.count) Negative")
+            print("===============================\n")
+            
+            return (finalPosRegions, finalNegRegions, regionalTwists)
         }
-        
-        print("4. Raw Buckets extracted: \(posRegions.count + negRegions.count)")
-        
-        // GEOMETRY SAFETY CAP:
-        let maxRegionsPerPolarity = 150
-        
-        posRegions.sort { abs($0.fluxIntensity) > abs($1.fluxIntensity) }
-        negRegions.sort { abs($0.fluxIntensity) > abs($1.fluxIntensity) }
-        
-        if posRegions.count > maxRegionsPerPolarity {
-            posRegions = Array(posRegions.prefix(maxRegionsPerPolarity))
-        }
-        if negRegions.count > maxRegionsPerPolarity {
-            negRegions = Array(negRegions.prefix(maxRegionsPerPolarity))
-        }
-        
-        print("5. Geometry Safety Cap applied (Top \(maxRegionsPerPolarity) poles per polarity).")
-        print("6. Final Distinct Regions: \(posRegions.count) Positive, \(negRegions.count) Negative")
-        print("===============================\n")
-        
-        return (posRegions, negRegions, regionalTwists)
-    }
 
     // MARK: - Volumetric Bucket Extraction (PFSS)
-        public func exportRawBuckets(from data: MagnetogramData, thresholdGauss: Float = 20.0) -> [MagneticBucket] {
+    public func exportRawBuckets(from data: MagnetogramData, thresholdGauss: Float = 20.0) -> [MagneticBucket] {
             print("\n=== VOLUMETRIC BUCKET EXTRACTION ===")
             let gridSize = 40
             let bucketsX = (data.width + gridSize - 1) / gridSize
@@ -354,19 +360,20 @@ public final class MagnetogramModeler: @unchecked Sendable {
                     }
                 }
                 
-                // Lower threshold (e.g., 20G) to capture more subtle regional currents
-                if localMaxAbsFlux > thresholdGauss {
+                // 🚨 STRATIFIED GENERATION: Calculate True Latitude using Arcsin
+                let sinLat = (Float(localPeakY) / Float(data.height - 1)) * 2.0 - 1.0
+                let latRad = asin(max(-1.0, min(1.0, sinLat)))
+                let trueLat = latRad * 180.0 / .pi
+                
+                // The PFSS physics volume needs to capture the polar loops we just allowed
+                let isPolar = abs(trueLat) > 55.0
+                let dynamicThreshold: Float = isPolar ? thresholdGauss * 0.25 : thresholdGauss
+                
+                if localMaxAbsFlux > dynamicThreshold {
                     let lon = (Float(localPeakX) / Float(data.width)) * 360.0 - 180.0
-                    // 2. Latitude requires Inverse Sine (Arcsin) for HMI Synoptic Maps
-                    // Normalize Y to the -1.0 to 1.0 range (representing sin(lat))
-                    let sinLat = (Float(localPeakY) / Float(data.height - 1)) * 2.0 - 1.0
-
-                    // Calculate true latitude in radians, then convert back to degrees for your pipeline
-                    let latRad = asin(max(-1.0, min(1.0, sinLat)))
-                    let lat = latRad * 180.0 / .pi
                     
                     // Convert instantly to the 3D unit sphere
-                    let cartesianPos = self.sphericalToCartesian(lat: lat, lon: lon, radius: 1.0)
+                    let cartesianPos = self.sphericalToCartesian(lat: trueLat, lon: lon, radius: 1.0)
                     
                     threadSafeBuckets[i] = MagneticBucket(position: cartesianPos, gauss: localPeakFlux)
                 }
