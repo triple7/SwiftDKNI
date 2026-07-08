@@ -15,6 +15,11 @@ import ImageIO
 // Assuming you have imported your preferred FITS package
 import FITS
 
+public struct MagneticBucket {
+    public let position: simd_float3 // 3D Cartesian Coordinate
+    public let gauss: Float          // Raw Flux Intensity
+}
+
 public struct MagneticRegion {
     let centroidLat: Float
     let centroidLon: Float
@@ -300,7 +305,68 @@ public final class MagnetogramModeler: @unchecked Sendable {
         
         return (posRegions, negRegions, regionalTwists)
     }
-    
+
+    // MARK: - Volumetric Bucket Extraction (PFSS)
+        public func exportRawBuckets(from data: MagnetogramData, thresholdGauss: Float = 20.0) -> [MagneticBucket] {
+            print("\n=== VOLUMETRIC BUCKET EXTRACTION ===")
+            let gridSize = 40
+            let bucketsX = (data.width + gridSize - 1) / gridSize
+            let bucketsY = (data.height + gridSize - 1) / gridSize
+            let totalBuckets = bucketsX * bucketsY
+            
+            var threadSafeBuckets = [MagneticBucket?](repeating: nil, count: totalBuckets)
+            
+            DispatchQueue.concurrentPerform(iterations: totalBuckets) { i in
+                let bx = i % bucketsX
+                let by = i / bucketsX
+                
+                let startX = bx * gridSize
+                let startY = by * gridSize
+                let endX = min(startX + gridSize, data.width)
+                let endY = min(startY + gridSize, data.height)
+                
+                var localMaxAbsFlux: Float = 0.0
+                var localPeakX = startX
+                var localPeakY = startY
+                var localPeakFlux: Float = 0.0
+                
+                for cy in startY..<endY {
+                    let rowOffset = cy * data.width
+                    for cx in startX..<endX {
+                        let index = rowOffset + cx
+                        let flux = data.fluxArray[index]
+                        
+                        if !flux.isNaN {
+                            let absFlux = abs(flux)
+                            if absFlux > localMaxAbsFlux {
+                                localMaxAbsFlux = absFlux
+                                localPeakFlux = flux
+                                localPeakX = cx
+                                localPeakY = cy
+                            }
+                        }
+                    }
+                }
+                
+                // Lower threshold (e.g., 20G) to capture more subtle regional currents
+                if localMaxAbsFlux > thresholdGauss {
+                    let lon = (Float(localPeakX) / Float(data.width)) * 360.0 - 180.0
+                    let lat = (Float(localPeakY) / Float(data.height)) * 180.0 - 90.0
+                    
+                    // Convert instantly to the 3D unit sphere
+                    let cartesianPos = self.sphericalToCartesian(lat: lat, lon: lon, radius: 1.0)
+                    
+                    threadSafeBuckets[i] = MagneticBucket(position: cartesianPos, gauss: localPeakFlux)
+                }
+            }
+            
+            let finalBuckets = threadSafeBuckets.compactMap { $0 }
+            print("Extracted \(finalBuckets.count) raw magnetic poles for 3D volumetric matrix.")
+            print("====================================\n")
+            
+            return finalBuckets
+        }
+
     private func sphericalToCartesian(lat: Float, lon: Float, radius: Float = 1.0) -> simd_float3 {
         let latRad = lat * .pi / 180.0
         let lonRad = lon * .pi / 180.0

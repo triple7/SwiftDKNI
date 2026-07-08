@@ -220,3 +220,179 @@ public func generateMagneticVolumeTexture(
 private func saturate(_ value: Float) -> Float {
     return max(0.0, min(1.0, value))
 }
+
+public func generateVolumetricFieldFromBuckets(
+    device: MTLDevice,
+    buckets: [MagneticBucket],
+    solarRadius: Float,
+    resolution: Int = 64
+) -> MTLTexture? {
+    
+    let voxelCount = resolution * resolution * resolution
+    let gridBounds: Float = solarRadius * 3.0
+    print("generateVolumetricFieldFromBuckets: creating \(voxelCount) voxel cube with radius \(gridBounds) radius")
+    let startVolume = CACurrentMediaTime()
+    // --- 1. ACCELERATE: FLAT COORDINATE ARRAYS ---
+    let start = -gridBounds
+    let step = (2.0 * gridBounds) / Float(resolution - 1)
+    let baseCoords = vDSP.ramp(withInitialValue: start, increment: step, count: resolution)
+    
+    var xs = [Float](unsafeUninitializedCapacity: voxelCount) { buffer, count in
+        var index = 0
+        for _ in 0..<resolution {
+            for _ in 0..<resolution {
+                for x in 0..<resolution {
+                    buffer[index] = baseCoords[x]
+                    index += 1
+                }
+            }
+        }
+        count = voxelCount
+    }
+    
+    var ys = [Float](unsafeUninitializedCapacity: voxelCount) { buffer, count in
+        var index = 0
+        for _ in 0..<resolution {
+            for y in 0..<resolution {
+                let yVal = baseCoords[y]
+                for _ in 0..<resolution {
+                    buffer[index] = yVal
+                    index += 1
+                }
+            }
+        }
+        count = voxelCount
+    }
+    
+    var zs = [Float](unsafeUninitializedCapacity: voxelCount) { buffer, count in
+        var index = 0
+        for z in 0..<resolution {
+            let zVal = baseCoords[z]
+            for _ in 0..<resolution {
+                for _ in 0..<resolution {
+                    buffer[index] = zVal
+                    index += 1
+                }
+            }
+        }
+        count = voxelCount
+    }
+    
+    // --- 2. PRE-ALLOCATE REUSABLE ACCELERATE BUFFERS ---
+    // (Moved outside the loop to prevent aggressive garbage collection thrashing)
+    var dx = [Float](repeating: 0.0, count: voxelCount)
+    var dy = [Float](repeating: 0.0, count: voxelCount)
+    var dz = [Float](repeating: 0.0, count: voxelCount)
+    var distSq = [Float](repeating: 0.0, count: voxelCount)
+    var decay = [Float](repeating: 0.0, count: voxelCount)
+    
+    var tempSq = [Float](repeating: 0.0, count: voxelCount)
+    let minSqArr = [Float](repeating: 0.01, count: voxelCount)
+    
+    var invR = [Float](repeating: 0.0, count: voxelCount)
+    var invRSq = [Float](repeating: 0.0, count: voxelCount)
+    
+    // Master accumulators for the final accumulated force
+    var masterX = [Float](repeating: 0.0, count: voxelCount)
+    var masterY = [Float](repeating: 0.0, count: voxelCount)
+    var masterZ = [Float](repeating: 0.0, count: voxelCount)
+    
+    // Core C-API length requirements
+    let vCount = vDSP_Length(voxelCount)
+    var count32 = Int32(voxelCount)
+    
+    // --- 3. THE MATRIX EXPANSION (PFSS Extrapolation) ---
+    for bucket in buckets {
+        var negBx = -(bucket.position.x * solarRadius)
+        var negBy = -(bucket.position.y * solarRadius)
+        var negBz = -(bucket.position.z * solarRadius)
+        var gauss = bucket.gauss
+        
+        // Calculate Distance Vectors (C-API Vector-Scalar Add)
+        vDSP_vsadd(xs, 1, &negBx, &dx, 1, vCount)
+        vDSP_vsadd(ys, 1, &negBy, &dy, 1, vCount)
+        vDSP_vsadd(zs, 1, &negBz, &dz, 1, vCount)
+        
+        // r^2 = dx^2 + dy^2 + dz^2
+        vDSP.square(dx, result: &distSq)
+        vDSP.square(dy, result: &tempSq)
+        vDSP.add(distSq, tempSq, result: &distSq)
+        vDSP.square(dz, result: &tempSq)
+        vDSP.add(distSq, tempSq, result: &distSq)
+        
+        // Safety clamp to prevent division by zero near the exact pole centers
+        vDSP.maximum(distSq, minSqArr, result: &distSq)
+        
+        // Inverse Cube Falloff (1.0 / (r^2 * sqrt(r^2)))
+        // C-API Vector Math (100% Zero-Allocation)
+        vvrsqrtf(&invR, distSq, &count32)       // 1 / r
+        vvrecf(&invRSq, distSq, &count32)       // 1 / r^2
+        vDSP.multiply(invR, invRSq, result: &decay) // 1 / r^3
+        
+        // Apply the Gauss magnitude: (Gauss / r^3)
+        // C-API Vector-Scalar Multiply
+        vDSP_vsmul(decay, 1, &gauss, &decay, 1, vCount)
+        
+        // Calculate final force vector and accumulate into the master array
+        vDSP.multiply(dx, decay, result: &tempSq)
+        vDSP.add(masterX, tempSq, result: &masterX)
+        
+        vDSP.multiply(dy, decay, result: &tempSq)
+        vDSP.add(masterY, tempSq, result: &masterY)
+        
+        vDSP.multiply(dz, decay, result: &tempSq)
+        vDSP.add(masterZ, tempSq, result: &masterZ)
+    }
+    
+    // --- 4. NORMALIZE & APPLY SOLAR WIND BACKGROUND ---
+    var finalData = [simd_float4](repeating: simd_float4(0,0,0,0), count: voxelCount)
+    
+    finalData.withUnsafeMutableBufferPointer { buffer in
+        for i in 0..<voxelCount {
+            let mx = masterX[i], my = masterY[i], mz = masterZ[i]
+            let magSq = (mx*mx) + (my*my) + (mz*mz)
+            
+            if magSq > 0.001 {
+                // High magnetic influence overrides the void
+                let invMag = 1.0 / sqrt(magSq)
+                // W = 1.0 flags this voxel for complete magnetic capture in the shader
+                buffer[i] = simd_float4(mx * invMag, my * invMag, mz * invMag, 1.0)
+            } else {
+                // The Void (Solar Wind Fallback)
+                let sx = xs[i], sy = ys[i], sz = zs[i]
+                let sMagSq = (sx*sx) + (sy*sy) + (sz*sz)
+                let invSMag = 1.0 / sqrt(max(sMagSq, 0.001))
+                // W = 0.1 flags this voxel as weak drifting wind
+                buffer[i] = simd_float4(sx * invSMag, sy * invSMag, sz * invSMag, 0.1)
+            }
+        }
+    }
+    
+    // --- 5. BUILD METAL TEXTURE ---
+    let descriptor = MTLTextureDescriptor()
+    descriptor.textureType = .type3D
+    descriptor.pixelFormat = .rgba32Float
+    descriptor.width = resolution
+    descriptor.height = resolution
+    descriptor.depth = resolution
+    descriptor.usage = [.shaderRead]
+    
+    guard let texture = device.makeTexture(descriptor: descriptor) else {
+        print("Failed to allocate 3D PFSS texture memory on GPU.")
+        return nil
+    }
+    
+    let bytesPerRow = MemoryLayout<simd_float4>.stride * resolution
+    let bytesPerImage = bytesPerRow * resolution
+    
+    texture.replace(region: MTLRegionMake3D(0, 0, 0, resolution, resolution, resolution),
+                    mipmapLevel: 0,
+                    slice: 0,
+                    withBytes: finalData,
+                    bytesPerRow: bytesPerRow,
+                    bytesPerImage: bytesPerImage)
+    
+    let end = CACurrentMediaTime()
+    print("generateVolumetricFieldFromBuckets: 3D boxel texture generated in \(end - startVolume) seconds.")
+    return texture
+}

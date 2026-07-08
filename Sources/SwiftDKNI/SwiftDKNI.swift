@@ -91,6 +91,7 @@ extension SwiftDKNI {
                 let magnetogramModeler = MagnetogramModeler()
                 
                 var openMagneticLines: [MagneticLoopLine] = []
+                var rawMagneticBuckets: [MagneticBucket] = []
                 
                 if let fitsURL = try? await magnetogramModeler.fetchLatestSynopticMagnetogram(cachedIfExists: cachedIfExists),
                    let magData = try? magnetogramModeler.processFitsFile(at: fitsURL) {
@@ -104,19 +105,22 @@ extension SwiftDKNI {
                     
                     let globalMagneticNode = geometryBuilder.createCoronalSurface(from: magneticLines, solarRadius: Float(sphere.radius))
                     coronalSurfaceNode.addChildNode(globalMagneticNode)
+
+                    // 2. Extract the un-capped buckets for the Physics Volume
+                    rawMagneticBuckets = magnetogramModeler.exportRawBuckets(from: magData, thresholdGauss: 20.0)
                 }
                 
                 // 4. Generate and align each CME event ONLY if the flag is true
                 if renderCME {
-                    // 🚨 GENERATE THE TEXTURE ONCE BEFORE THE LOOP
-                    print("Generating shared 3D Magnetic Volume...")
-                    let sharedMagneticVolume = generateMagneticVolumeTexture(
+                    //  GENERATE THE VOLUMETRIC TEXTURE ONCE
+                    print("Generating shared 3D PFSS Magnetic Volume...")
+                    let sharedMagneticVolume = generateVolumetricFieldFromBuckets(
                         device: device,
-                        lines: openMagneticLines,
+                        buckets: rawMagneticBuckets,
                         solarRadius: Float(sphere.radius)
                     )
-
-                    // 🚨 DYNAMIC THROTTLE: Distribute the max points across all active events to prevent vertex overflow
+                    
+                    //  DYNAMIC THROTTLE: Distribute the max points across all active events to prevent vertex overflow
                     let calculatedPointsPerEvent = max(500, maxPointsPerCME / max(1, events.count))
                     
                     for event in events {
@@ -146,8 +150,12 @@ extension SwiftDKNI {
                         if let material = cmeNode.geometry?.materials.first {
                             material.setValue(NSNumber(value: safeIgnitionTime), forKey: "u_ignitionTime")
 
-                                let volumeProperty = SCNMaterialProperty(contents: sharedMagneticVolume)
+                            // Bind the shared PFSS texture
+                            if let magneticVolume = sharedMagneticVolume {
+                                print("generateCoronalSurfaceUsingMegnetoGram: Added voxel volume")
+                                let volumeProperty = SCNMaterialProperty(contents: magneticVolume)
                                 material.setValue(volumeProperty, forKey: "u_magneticVolume")
+                            }
                         }
                         coronalSurfaceNode.addChildNode(cmeNode)
                     }
