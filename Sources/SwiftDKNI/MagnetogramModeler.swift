@@ -234,8 +234,14 @@ public final class MagnetogramModeler: @unchecked Sendable {
             
             if localMaxAbsFlux > thresholdGauss {
                 let lon = (Float(localPeakX) / Float(data.width)) * 360.0 - 180.0
-                let lat = (Float(localPeakY) / Float(data.height)) * 180.0 - 90.0
-                
+                // 2. Latitude requires Inverse Sine (Arcsin) for HMI Synoptic Maps
+                // Normalize Y to the -1.0 to 1.0 range (representing sin(lat))
+                let sinLat = (Float(localPeakY) / Float(data.height - 1)) * 2.0 - 1.0
+
+                // Calculate true latitude in radians, then convert back to degrees for your pipeline
+                let latRad = asin(max(-1.0, min(1.0, sinLat)))
+                let lat = latRad * 180.0 / .pi
+
                 bucketResults[i] = MagneticRegion(centroidLat: lat, centroidLon: lon, fluxIntensity: localPeakFlux, isPositive: localPeakFlux > 0)
                 
                 // Calculate the regional magnetic moment (Helicity)
@@ -351,7 +357,13 @@ public final class MagnetogramModeler: @unchecked Sendable {
                 // Lower threshold (e.g., 20G) to capture more subtle regional currents
                 if localMaxAbsFlux > thresholdGauss {
                     let lon = (Float(localPeakX) / Float(data.width)) * 360.0 - 180.0
-                    let lat = (Float(localPeakY) / Float(data.height)) * 180.0 - 90.0
+                    // 2. Latitude requires Inverse Sine (Arcsin) for HMI Synoptic Maps
+                    // Normalize Y to the -1.0 to 1.0 range (representing sin(lat))
+                    let sinLat = (Float(localPeakY) / Float(data.height - 1)) * 2.0 - 1.0
+
+                    // Calculate true latitude in radians, then convert back to degrees for your pipeline
+                    let latRad = asin(max(-1.0, min(1.0, sinLat)))
+                    let lat = latRad * 180.0 / .pi
                     
                     // Convert instantly to the 3D unit sphere
                     let cartesianPos = self.sphericalToCartesian(lat: lat, lon: lon, radius: 1.0)
