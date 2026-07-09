@@ -31,26 +31,44 @@ final public class CMEFluxRopeRenderer: Sendable {
             eventLatitude: Float(event.latitude ?? 0.0),
             eventLongitude: Float(event.longitude ?? 0.0),
             eventHalfAngle: Float(event.halfAngle ?? 45.0),
+            eventSpeed: Float(event.speed),
             openLines: openLines,
-            pointCount: pointCount, // 🚨 The source of the geometry explosion
+            pointCount: pointCount,
             solarRadius: solarRadius
         )
         
-        // Prevent the CPU from aggressively culling the geometry
+        // ADDED: Prevent the CPU from aggressively culling the geometry
         let bound = CGFloat(solarRadius * 10.0)
         geometry.boundingBox = (min: SCNVector3(-bound, -bound, -bound), max: SCNVector3(bound, bound, bound))
+
+//            let material = SCNMaterial()
+//
+//            // 1. Give it a blaring debug color (Neon Green or Red works best)
+//            #if os(macOS)
+//            material.diffuse.contents = NSColor.systemGreen
+//            #else
+//            material.diffuse.contents = UIColor.systemGreen
+//            #endif
+//
+//            // 4. Set Fill Mode to lines so you can see the two triangles making up each quad
+//            material.fillMode = .lines // Change to .fill if you just want solid green squares
+//
+//            material.lightingModel = .constant
+//            material.readsFromDepthBuffer = true // Turn this back on so they don't draw through the sun
+//            material.writesToDepthBuffer = true
+//            material.isDoubleSided = true
+//
+//            geometry.materials = [material]
         
         let material = SCNMaterial()
         
-        // Assign a basic color to diffuse to lock the UV channels open
-#if os(macOS)
+        // ADDED: Assign a basic color to diffuse to lock the UV channels open
+        #if os(macOS)
         material.diffuse.contents = NSColor.white
-#else
+        #else
         material.diffuse.contents = UIColor.white
-#endif
+        #endif
         material.diffuse.mappingChannel = 0
-        material.transparent.mappingChannel = 0
-
         
         let fileManager = FileManager.default
         let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -64,30 +82,29 @@ final public class CMEFluxRopeRenderer: Sendable {
             .surface: fragmentSource
         ]
         
-        // --- 🚨 CRITICAL BLEND & DEPTH FIXES ---
         material.blendMode = .add
         material.lightingModel = .constant
-        
-        // Must read from depth buffer so the sun occludes particles behind it!
-        material.readsFromDepthBuffer = true
+        material.readsFromDepthBuffer = false
         material.writesToDepthBuffer = false
         material.isDoubleSided = true
         
-        // 3. Safely box Floats for SceneKit KVC
+        let thickness: Float = 0.3
+        material.setValue(thickness, forKey: "u_thickness")
         
-        material.setValue(NSNumber(value: Float(0.3)), forKey: "u_thickness")
-        material.setValue(NSNumber(value: Float(5.0)), forKey: "u_globalTime")
-        material.setValue(NSNumber(value: Float(0.0)), forKey: "u_ignitionTime")
+        let initialTime: Float = 0.0
+        material.setValue(initialTime, forKey: "u_globalTime")
+        
+        let ignitionTime: Float = 0.0
+        material.setValue(ignitionTime, forKey: "u_ignitionTime")
         
         let visualSpeedScale: Float = 0.001
-        let scaledSpeedFloat = Float(event.speed) * visualSpeedScale
-        material.setValue(NSNumber(value: scaledSpeedFloat), forKey: "u_speed")
-        
-        material.setValue(NSNumber(value: solarRadius), forKey: "u_solarRadius")
-        
-        let halfAngleFloat = Float(event.halfAngle ?? 45.0) * .pi / 180.0
-        material.setValue(NSNumber(value: halfAngleFloat), forKey: "u_halfAngle")
+        let scaledSpeed = Float(event.speed) * visualSpeedScale
+        material.setValue(scaledSpeed, forKey: "u_speed")
 
+        material.setValue(NSNumber(value: solarRadius), forKey: "u_solarRadius")
+        let halfAngleRad = Float(event.halfAngle ?? 45.0) * .pi / 180.0
+        material.setValue(halfAngleRad, forKey: "u_halfAngle")
+        
         geometry.materials = [material]
         
         let node = SCNNode(geometry: geometry)
@@ -95,5 +112,4 @@ final public class CMEFluxRopeRenderer: Sendable {
         
         return node
     }
-    
 }

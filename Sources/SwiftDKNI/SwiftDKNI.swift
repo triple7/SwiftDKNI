@@ -71,11 +71,11 @@ extension SwiftDKNI {
             if let coronalHoleMask = try? await sdoService.fetchLatestImage(wavelength: .aia193, resolution: 4096, cachedIfExists: cachedIfExists) {
                 baseMaterial.transparent.contents = coronalHoleMask
             } else {
-    #if os(macOS)
+#if os(macOS)
                 baseMaterial.transparent.contents = NSColor.white
-    #else
+#else
                 baseMaterial.transparent.contents = UIColor.white
-    #endif
+#endif
             }
             
             // --- SHADER 1: The Geometry Swirl ---
@@ -285,15 +285,22 @@ extension SwiftDKNI {
                         firstIgnitionTime = safeIgnitionTime
                     }
                     
+                    
+                    
+                    // Generate the specialized node using the SCNSphere's exact physical radius
+                    // ADDED: We now pass the openMagneticLines to map the DONKI event to the FITS splines
                     let cmeNode = try! renderer.createCoronalEjectionNode(
                         for: event,
                         openLines: openMagneticLines,
-                        pointCount: calculatedPointsPerEvent,
-                        solarRadius: sRadius
+                        pointCount: 1000,
+                        solarRadius: Float(sphere.radius)
                     )
                     
                     if let material = cmeNode.geometry?.materials.first {
 //                        material.setValue(NSNumber(value: safeIgnitionTime), forKey: "u_ignitionTime")
+                        var ignitionFloat = safeIgnitionTime
+                        let ignitionData = Data(bytes: &ignitionFloat, count: MemoryLayout<Float>.size)
+//                        material.setValue(ignitionData, forKey: "u_ignitionTime")
 
                         // TODO: DIAGNOSTIC: Force all CMEs to erupt simultaneously at t=0
                         material.setValue(NSNumber(value: Float(0.0)), forKey: "u_ignitionTime")

@@ -30,6 +30,21 @@ extension CMEGeometryBuilder {
         return randomFloats
     }
     
+    internal func generateLinearArray(count: Int, min: Float, max: Float) -> [Float] {
+        // Guard against a count of 0 or 1 to prevent division-by-zero math inside vDSP
+        guard count > 1 else { return [min] }
+        var result = [Float](repeating: 0.0, count: count)
+        
+        var startVal = min
+        var endVal = max
+        
+        // vDSP_vgen generates a linearly spaced sequence between startVal and endVal
+        vDSP_vgen(&startVal, &endVal, &result, 1, vDSP_Length(count))
+        
+        return result
+    }
+    
+    
     public func buildAcceleratedEnergyTunnels(from lines: [MagneticLoopLine], particlesPerUnitLength: Float = 50.0, solarRadius: Float) -> SCNNode {
             
             let validLines = lines.filter { !$0.isOpen }
