@@ -227,16 +227,26 @@ extension SwiftDKNI {
                 var mapWidth = 0
                 var mapHeight = 0
                 
-                if let coronalHoleMask = try? await sdoService.fetchLatestImage(wavelength: .aia193, resolution: 4096, cachedIfExists: cachedIfExists),
-                   let cgImage = coronalHoleMask.cgImage {
-                    mapWidth = cgImage.width
-                    mapHeight = cgImage.height
-                    let colorSpace = CGColorSpaceCreateDeviceGray()
-                    var rawData = [UInt8](repeating: 0, count: mapWidth * mapHeight)
-                    if let context = CGContext(data: &rawData, width: mapWidth, height: mapHeight, bitsPerComponent: 8, bytesPerRow: mapWidth, space: colorSpace, bitmapInfo: CGImageAlphaInfo.none.rawValue) {
-                        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: mapWidth, height: mapHeight))
-                        topologicalMap = rawData
-                        print("✅ CPU Topological Map successfully loaded (\(mapWidth)x\(mapHeight))")
+                if let coronalHoleMask = try? await sdoService.fetchLatestImage(wavelength: .aia193, resolution: 4096, cachedIfExists: cachedIfExists) {
+                    
+                    //  FIX: Safely extract the CGImage depending on the OS architecture
+    #if os(macOS)
+                    let extractedCGImage = coronalHoleMask.cgImage(forProposedRect: nil, context: nil, hints: nil)
+    #else
+                    let extractedCGImage = coronalHoleMask.cgImage
+    #endif
+                    
+                    if let cgImage = extractedCGImage {
+                        mapWidth = cgImage.width
+                        mapHeight = cgImage.height
+                        let colorSpace = CGColorSpaceCreateDeviceGray()
+                        var rawData = [UInt8](repeating: 0, count: mapWidth * mapHeight)
+                        
+                        if let context = CGContext(data: &rawData, width: mapWidth, height: mapHeight, bitsPerComponent: 8, bytesPerRow: mapWidth, space: colorSpace, bitmapInfo: CGImageAlphaInfo.none.rawValue) {
+                            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: mapWidth, height: mapHeight))
+                            topologicalMap = rawData
+                            print("✅ CPU Topological Map successfully loaded (\(mapWidth)x\(mapHeight))")
+                        }
                     }
                 }
                 
