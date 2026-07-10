@@ -40,6 +40,46 @@ final public class SwiftDKNI: Sendable {
 
 // MARK: - Surface Generation Extension
 extension SwiftDKNI {
+
+    private func createTopologicalWarpShader() -> String {
+        let solarTopologyShader = """
+        #pragma arguments
+        float u_warpIntensity;
+        texture2d<float, access::sample> u_activeRegionMap;
+
+        #pragma body
+        constexpr sampler texSampler(coord::normalized, address::clamp_to_edge, filter::linear);
+
+        // 1. Read the 4096 NASA Image as a topological height map
+        float2 uv = _geometry.texcoords[0];
+        float4 mapData = u_activeRegionMap.sample(texSampler, uv);
+
+        // The 171/193 angstrom images are bright white in active magnetic regions.
+        float activityLevel = mapData.r; 
+
+        // 2. The Rotational Oblateness (Equatorial Bulge)
+        float3 currentPos = _geometry.position.xyz;
+        float3 surfaceNormal = _geometry.normal;
+        float baseRadius = length(currentPos);
+
+        // Calculate latitude. Y-axis is up, so (y / radius) gives sin(latitude).
+        float sinLat = currentPos.y / baseRadius;
+        float cosLat = sqrt(max(0.0f, 1.0f - (sinLat * sinLat))); // 1.0 at equator, 0.0 at poles
+
+        // Exaggerated equatorial bulge (e.g., 1.5% fatter at the equator due to rotation twist)
+        float oblateness = cosLat * 0.015f; 
+
+        // 3. Magnetic Warping (Active Regions push the plasma outward)
+        // We subtract 0.1 so quiet coronal holes dip slightly, and bright active regions bulge heavily.
+        float magneticBulge = (activityLevel - 0.1f) * u_warpIntensity;
+
+        // 4. Apply the combined topological warp along the vertex normal
+        float totalDisplacement = (oblateness + magneticBulge) * baseRadius;
+        _geometry.position.xyz = currentPos + (surfaceNormal * totalDisplacement);
+        """
+        return solarTopologyShader
+    }
+
     
     private func applySolarSurfaceMaterials(
             to sphere: SCNSphere,
@@ -54,6 +94,9 @@ extension SwiftDKNI {
                   let baseMaterial = sphere.materials.first else {
                 return
             }
+            
+            //  UPGRADE: Increase sphere geometry density so we have enough vertices to physically warp
+            sphere.segmentCount = 200
             
             baseMaterial.lightingModel = .constant
             let sdoService = NASASDOService()
@@ -70,28 +113,64 @@ extension SwiftDKNI {
             // --- LAYER 3: Atmospheric Coronal Holes (AIA 193) ---
             if let coronalHoleMask = try? await sdoService.fetchLatestImage(wavelength: .aia193, resolution: 4096, cachedIfExists: cachedIfExists) {
                 baseMaterial.transparent.contents = coronalHoleMask
+                
+                //  BINDING: Pass the exact same NASA image into the shader to act as a 3D height map
+                let activeRegionMapProperty = SCNMaterialProperty(contents: coronalHoleMask)
+                baseMaterial.setValue(activeRegionMapProperty, forKey: "u_activeRegionMap")
             } else {
-#if os(macOS)
+    #if os(macOS)
                 baseMaterial.transparent.contents = NSColor.white
-#else
+    #else
                 baseMaterial.transparent.contents = UIColor.white
-#endif
+    #endif
             }
             
-            // --- SHADER 1: The Geometry Swirl ---
-            let plasmaSwirlShader = """
+            // Set the warp intensity (0.05 = 5% of solar radius)
+            baseMaterial.setValue(Float(0.05), forKey: "u_warpIntensity")
+            
+            // --- SHADER 1: Merged UV Swirl + Topological Warp ---
+            let unifiedGeometryShader = """
+                #pragma arguments
+                float u_warpIntensity;
+                texture2d<float, access::sample> u_activeRegionMap;
+                
                 #pragma body
                 
+                // --- PART A: THE UV SWIRL (Your existing code) ---
                 float flowTime = u_time * 0.15;
                 
                 float warpX = (sin(_geometry.texcoords[0].y * 12.0 + flowTime) 
                              + sin(_geometry.texcoords[0].y * 28.0 - flowTime * 1.5)) * 0.003;
-                                                             
+                                                                               
                 float warpY = (cos(_geometry.texcoords[0].x * 14.0 - flowTime) 
                              + cos(_geometry.texcoords[0].x * 24.0 + flowTime * 1.2)) * 0.003;
                 
                 _geometry.texcoords[0].x += warpX;
                 _geometry.texcoords[0].y += warpY;
+                
+                // --- PART B: THE 3D MAGNETIC WARP ---
+                constexpr sampler texSampler(coord::normalized, address::clamp_to_edge, filter::linear);
+                
+                // We sample using the newly swirled UVs so the 3D bumps animate with the plasma!
+                float2 uv = _geometry.texcoords[0];
+                float4 mapData = u_activeRegionMap.sample(texSampler, uv);
+                float activityLevel = mapData.r; 
+                
+                float3 currentPos = _geometry.position.xyz;
+                float3 surfaceNormal = _geometry.normal;
+                float baseRadius = length(currentPos);
+                
+                // Equatorial Bulge (Centrifugal rotation twist)
+                float sinLat = currentPos.y / baseRadius;
+                float cosLat = sqrt(max(0.0f, 1.0f - (sinLat * sinLat)));
+                float oblateness = cosLat * 0.015f; 
+                
+                // Magnetic Warping (Active Regions push outward)
+                float magneticBulge = (activityLevel - 0.1f) * u_warpIntensity;
+                
+                // Apply displacement along the vertex normal
+                float totalDisplacement = (oblateness + magneticBulge) * baseRadius;
+                _geometry.position.xyz = currentPos + (surfaceNormal * totalDisplacement);
                 """
             
             // --- SHADER 2: Multi-Band Atmosphere Composite ---
@@ -122,11 +201,11 @@ extension SwiftDKNI {
                 """
             
             baseMaterial.shaderModifiers = [
-                .geometry: plasmaSwirlShader,
+                .geometry: unifiedGeometryShader,
                 .surface: multiBandSolarShader
             ]
         }
-    
+
     /// Fetches, generates, and time-aligns all CME events into a single container node.
     /// - Parameters:
     ///   - sphere: The central SCNSphere whose radius dictates the starting boundary.
@@ -192,7 +271,7 @@ extension SwiftDKNI {
             if let fitsURL = try? await magnetogramModeler.fetchLatestSynopticMagnetogram(cachedIfExists: cachedIfExists),
                let magData = try? magnetogramModeler.processFitsFile(at: fitsURL) {
                 
-                // 🚨 STAGE 1: THE AMBIENT FIELD
+                //  STAGE 1: THE AMBIENT FIELD
                 // Extract un-capped buckets and generate the ambient PFSS Volume Matrix on the CPU
                 rawMagneticBuckets = magnetogramModeler.exportRawBuckets(from: magData, thresholdGauss: 20.0)
                 
@@ -204,7 +283,7 @@ extension SwiftDKNI {
                     solarRadius: sRadius
                 ).volumeData
                 
-                // 🚨 STAGE 2: THE GEOMETRY DEFORMATION
+                //  STAGE 2: THE GEOMETRY DEFORMATION
                 // Trace the base magnetic loop paths from the map
                 let magneticLoopStart = CACurrentMediaTime()
                 var magneticLines = magnetogramModeler.calculateMagneticLoops(from: magData)
