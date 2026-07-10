@@ -237,7 +237,7 @@ extension SwiftDKNI {
                 
                 openMagneticLines = magneticLines.filter { $0.isOpen }
                 
-                // 🚨 STAGE 3: THE FLOW FIELD (GPU RASTERIZATION)
+                //  STAGE 3: THE FLOW FIELD (GPU RASTERIZATION)
                 // Rasterize the fully deformed splines into the final 3D Texture for the CMEs
                 print("Generating final CME Flow Volume via Spline Rasterization...")
                 let volumeResult = self.generateMagneticVolumeTexture(
@@ -247,7 +247,7 @@ extension SwiftDKNI {
                 )
                 sharedMagneticVolume = volumeResult.texture
                 
-                // 🚨 STAGE 4: VISUAL GEOMETRY
+                //  STAGE 4: VISUAL GEOMETRY
                 // Construct and add the physical volumetric spline tubes to the scene
                 let globalMagneticNode = geometryBuilder.createCoronalSurface(from: magneticLines, solarRadius: sRadius)
                 coronalSurfaceNode.addChildNode(globalMagneticNode)
