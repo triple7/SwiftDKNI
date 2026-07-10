@@ -426,24 +426,28 @@ extension SwiftDKNI {
                 ]
             ],
             "passes": [
-                // PASS 1: Base render pass
+                // PASS 1: Base render pass (Sun + Starfield)
                 "mainScenePass": [
                     "draw": "DRAW_SCENE",
                     "inputs": [:],
-                    // 🚨 FIX 2: Added depth buffer output to prevent render initialization failures
                     "outputs": [
                         "color": "SCENE_BUFFER",
                         "depth": "DEPTH_BUFFER"
-                    ]
+                    ],
+                    // 🚨 PREVENTS DOUBLE RENDER: Do not draw CMEs in the base pass
+                    "excludeCategoryMask": 4
                 ],
-                // PASS 2: Isolate the categoryBitMask 4 CMEs
+                // PASS 2: Isolate the CMEs on a transparent background
                 "cmePass": [
                     "draw": "DRAW_SCENE",
-                    "inputs": [:],
-                    // 🚨 FIX 2: Shares the depth buffer so CMEs are physically occluded by the sun
+                    "inputs": [
+                        // 🚨 THE GRAPH FIX: This dummy input mathematically forces Metal
+                        // to evaluate mainScenePass first, preventing the dependency crash.
+                        "forceDependency": "SCENE_BUFFER"
+                    ],
                     "outputs": [
                         "color": "CME_BUFFER",
-                        "depth": "DEPTH_BUFFER"
+                        "depth": "DEPTH_BUFFER" // Shares depth so CMEs are physically occluded by the sun
                     ],
                     "includeCategoryMask": 4
                 ],
@@ -486,7 +490,6 @@ extension SwiftDKNI {
                 "SCENE_BUFFER": ["type": "color", "size": "relative"],
                 "DISTORTED_BUFFER": ["type": "color", "size": "relative"],
                 "BLURRED_BUFFER": ["type": "color", "size": "relative"],
-                // 🚨 FIX 2: Physically defined depth target in memory
                 "DEPTH_BUFFER": ["type": "depth", "size": "relative"]
             ],
             "sequence": ["mainScenePass", "cmePass", "distortionPass", "blurPass", "tintPass"]
