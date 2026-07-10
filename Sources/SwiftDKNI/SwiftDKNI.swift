@@ -137,7 +137,7 @@ extension SwiftDKNI {
                 #pragma body
                 
                 // --- PART A: THE UV SWIRL (Your existing code) ---
-                float flowTime = u_time * 0.15;
+                float flowTime = scn_frame.time * 0.15;
                 
                 float warpX = (sin(_geometry.texcoords[0].y * 12.0 + flowTime) 
                              + sin(_geometry.texcoords[0].y * 28.0 - flowTime * 1.5)) * 0.003;
