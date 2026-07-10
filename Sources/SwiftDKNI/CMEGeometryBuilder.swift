@@ -255,6 +255,7 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         
         let tunnelStart = CACurrentMediaTime()
         let energyTunnelsNode = buildAcceleratedEnergyTunnels(from: lines, solarRadius: solarRadius)
+        energyTunnelsNode.categoryBitMask = 4
         let tunnelEnd = CACurrentMediaTime()
         print("createCoronalSurface: Created energy tunnels in \(tunnelEnd - tunnelStart) seconds.")
         
