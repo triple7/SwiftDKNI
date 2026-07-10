@@ -417,36 +417,20 @@ extension SwiftDKNI {
     public func addDistortionTechniqueToScene(sceneView: SCNView, initialTint: simd_float4 = simd_float4(1.0, 0.92, 0.80, 1.0)) {
             let techniqueDict: [String: Any] = [
                 "symbols": [
-                    "timeSymbol": [
-                        "semantic": "time",
-                        "type": "float"
-                    ],
-                    "starTintSymbol": [
-                        "type": "vec4"
-                    ]
+                    "timeSymbol": ["semantic": "time", "type": "float"],
+                    "starTintSymbol": ["type": "vec4"]
                 ],
                 "passes": [
-                    // PASS 1: Base render pass (Sun + Starfield)
                     "mainScenePass": [
                         "draw": "DRAW_SCENE",
-                        "inputs": [:],
-                        // 🚨 FIX 2: No custom depth target. Implicitly uses SceneKit's internal depth.
-                        "outputs": [
-                            "color": "SCENE_BUFFER"
-                        ],
+                        "outputs": ["color": "SCENE_BUFFER"],
                         "excludeCategoryMask": 4
                     ],
-                    // PASS 2: Isolate the CMEs on a transparent background
                     "cmePass": [
                         "draw": "DRAW_SCENE",
-                        "inputs": [:],
-                        // 🚨 FIX 2: Shares internal depth with Pass 1 automatically for occlusion.
-                        "outputs": [
-                            "color": "CME_BUFFER"
-                        ],
+                        "outputs": ["color": "CME_BUFFER"],
                         "includeCategoryMask": 4
                     ],
-                    // PASS 3: Refraction calculation
                     "distortionPass": [
                         "draw": "DRAW_QUAD",
                         "metalVertexShader": "distortionVertex",
@@ -458,7 +442,6 @@ extension SwiftDKNI {
                         ],
                         "outputs": ["color": "DISTORTED_BUFFER"]
                     ],
-                    // PASS 4: Chromatic Heat Haze Blur
                     "blurPass": [
                         "draw": "DRAW_QUAD",
                         "metalVertexShader": "distortionVertex",
@@ -468,7 +451,6 @@ extension SwiftDKNI {
                         ],
                         "outputs": ["color": "BLURRED_BUFFER"]
                     ],
-                    // PASS 5: Gaia Tint Filter
                     "tintPass": [
                         "draw": "DRAW_QUAD",
                         "metalVertexShader": "distortionVertex",
@@ -481,28 +463,23 @@ extension SwiftDKNI {
                     ]
                 ],
                 "targets": [
-                    "CME_BUFFER": ["type": "color", "size": "relative"],
-                    "SCENE_BUFFER": ["type": "color", "size": "relative"],
-                    "DISTORTED_BUFFER": ["type": "color", "size": "relative"],
-                    "BLURRED_BUFFER": ["type": "color", "size": "relative"]
-                    // 🚨 FIX 2: The custom DEPTH_BUFFER has been completely deleted.
+                    "CME_BUFFER": ["type": "color"],
+                    "SCENE_BUFFER": ["type": "color"],
+                    "DISTORTED_BUFFER": ["type": "color"],
+                    "BLURRED_BUFFER": ["type": "color"]
                 ],
                 "sequence": ["mainScenePass", "cmePass", "distortionPass", "blurPass", "tintPass"]
             ]
             
-            guard let technique = SCNTechnique(dictionary: techniqueDict) else {
-                print("Failed to compile SCNTechnique dictionary.")
-                return
-            }
+            guard let technique = SCNTechnique(dictionary: techniqueDict) else { return }
             
+            // Final attempt: Ensure the tint buffer matches the expected vector4 layout
             let tintValue = NSValue(scnVector4: SCNVector4(
-                CGFloat(initialTint.x),
-                CGFloat(initialTint.y),
-                CGFloat(initialTint.z),
-                CGFloat(initialTint.w)
+                CGFloat(initialTint.x), CGFloat(initialTint.y),
+                CGFloat(initialTint.z), CGFloat(initialTint.w)
             ))
-            
             technique.setValue(tintValue, forKey: "starTintSymbol")
+            
             sceneView.technique = technique
         }
     
