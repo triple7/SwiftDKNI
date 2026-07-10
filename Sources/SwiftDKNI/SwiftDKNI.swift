@@ -167,227 +167,244 @@ extension SwiftDKNI {
         }
 
     /// Fetches, generates, and time-aligns all CME events into a single container node.
-    /// - Parameters:
-    ///   - sphere: The central SCNSphere whose radius dictates the starting boundary.
-    ///   - pointsPerEvent: The vertex density for each individual flux rope.
-    ///   - startTime: The start date string (yyyy-MM-dd).
-    ///   - endTime: The end date string (yyyy-MM-dd).
-    /// - Returns: An SCNNode containing all aligned CME child nodes.
-    public func generateCoronalSurfaceUsingMegnetoGram(
-            device: MTLDevice,
-            sphere: SCNSphere,
-            maxPointsPerCME: Int = 125000,
-            startTime: String,
-            endTime: String,
-            cachedIfExists: Bool = true,
-            renderCME: Bool = true
-        ) async throws -> SCNNode {
-            
-            // 1. Fetch the averaged data using the securely injected API key
-            let request = CMERequest(startDate: startTime, endDate: endTime, apiKey: self.apiKey)
-            
-            var events: [AveragedCMEData] = []
-            do {
-                events = try await donkiService.fetchAndAverageCMEData(request: request, cachedIfExists: cachedIfExists)
-            } catch {
-                print("Warning: CME Generation Failed (\(error)). Proceeding with base sun & magnetic loops only.")
-            }
-            
-            // 2. Create the parent container
-            let coronalSurfaceNode = SCNNode()
-            
-            // 3. Setup Date Parsers to establish t = 0 and timeline boundaries
-            let queryFormatter = DateFormatter()
-            queryFormatter.dateFormat = "yyyy-MM-dd"
-            queryFormatter.timeZone = TimeZone(secondsFromGMT: 0)
-            
-            let simulationStart = queryFormatter.date(from: startTime) ?? Date()
-            let simulationEnd = queryFormatter.date(from: endTime) ?? simulationStart.addingTimeInterval(86400 * 30)
-            
-            // Calculate the timeline compression ratio (Maps the entire query window into a 60-second visual loop)
-            let totalRealSeconds = simulationEnd.timeIntervalSince(simulationStart)
-            let visualLoopDuration: Double = 60.0
-            let compressionRatio = visualLoopDuration / max(1.0, totalRealSeconds)
-            
-            let donkiFormatter = DateFormatter()
-            donkiFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm'Z'"
-            donkiFormatter.timeZone = TimeZone(secondsFromGMT: 0)
-            
-            let backupISOFormatter = ISO8601DateFormatter()
-            backupISOFormatter.formatOptions = [.withInternetDateTime]
-            
-            let geometryBuilder = CMEGeometryBuilder()
-            
-            // --- FETCH, BUILD & DEFORM GLOBAL MAGNETIC LOOPS FROM FITS DATA ---
-            print("Fetching FITS Magnetogram...")
-            let magnetogramModeler = MagnetogramModeler()
-            
-            var openMagneticLines: [MagneticLoopLine] = []
-            var rawMagneticBuckets: [MagneticBucket] = []
-            var sharedMagneticVolume: MTLTexture? = nil
-            
-            let sRadius = Float(sphere.radius)
-            
-            if let fitsURL = try? await magnetogramModeler.fetchLatestSynopticMagnetogram(cachedIfExists: cachedIfExists),
-               let magData = try? magnetogramModeler.processFitsFile(at: fitsURL) {
+        /// - Parameters:
+        ///   - sphere: The central SCNSphere whose radius dictates the starting boundary.
+        ///   - pointsPerEvent: The vertex density for each individual flux rope.
+        ///   - startTime: The start date string (yyyy-MM-dd).
+        ///   - endTime: The end date string (yyyy-MM-dd).
+        /// - Returns: An SCNNode containing all aligned CME child nodes.
+        public func generateCoronalSurfaceUsingMegnetoGram(
+                device: MTLDevice,
+                sphere: SCNSphere,
+                maxPointsPerCME: Int = 125000,
+                startTime: String,
+                endTime: String,
+                cachedIfExists: Bool = true,
+                renderCME: Bool = true
+            ) async throws -> SCNNode {
                 
-                //  STAGE 1: THE AMBIENT FIELD
-                // Extract un-capped buckets and generate the ambient PFSS Volume Matrix on the CPU
-                rawMagneticBuckets = magnetogramModeler.exportRawBuckets(from: magData, thresholdGauss: 20.0)
+                // 1. Fetch the averaged data using the securely injected API key
+                let request = CMERequest(startDate: startTime, endDate: endTime, apiKey: self.apiKey)
                 
-                print("Generating Ambient 3D PFSS Vector Field...")
-                // Note: Assuming generateVolumetricFieldFromBuckets returns (volumeData: [simd_float4], texture: MTLTexture?)
-                let ambientPFSSArray = self.generateVolumetricFieldFromBuckets(
-                    device: device,
-                    buckets: rawMagneticBuckets,
-                    solarRadius: sRadius
-                ).volumeData
+                var events: [AveragedCMEData] = []
+                do {
+                    events = try await donkiService.fetchAndAverageCMEData(request: request, cachedIfExists: cachedIfExists)
+                } catch {
+                    print("Warning: CME Generation Failed (\(error)). Proceeding with base sun & magnetic loops only.")
+                }
                 
-                //  STAGE 2: THE GEOMETRY DEFORMATION
-                // Trace the base magnetic loop paths from the map
-                let magneticLoopStart = CACurrentMediaTime()
-                var magneticLines = magnetogramModeler.calculateMagneticLoops(from: magData)
+                // 2. Create the parent container
+                let coronalSurfaceNode = SCNNode()
                 
-                // Intercept splines on CPU to apply ambient field deformation & Solar Rotation
-                magneticLines = magneticLines.map { line in
-                    // A. Bend the apex based on the ambient voxel vectors
-                    var (newP0, newP1, newP2) = self.applyMagneticInfluenceToSpline(
-                        startPoint: line.p0,
-                        apexPoint: line.p1,
-                        endPoint: line.p2,
-                        isOpen: line.isOpen,
-                        pfssVolume: ambientPFSSArray,
+                // 3. Setup Date Parsers to establish t = 0 and timeline boundaries
+                let queryFormatter = DateFormatter()
+                queryFormatter.dateFormat = "yyyy-MM-dd"
+                queryFormatter.timeZone = TimeZone(secondsFromGMT: 0)
+                
+                let simulationStart = queryFormatter.date(from: startTime) ?? Date()
+                let simulationEnd = queryFormatter.date(from: endTime) ?? simulationStart.addingTimeInterval(86400 * 30)
+                
+                // Calculate the timeline compression ratio (Maps the entire query window into a 60-second visual loop)
+                let totalRealSeconds = simulationEnd.timeIntervalSince(simulationStart)
+                let visualLoopDuration: Double = 60.0
+                let compressionRatio = visualLoopDuration / max(1.0, totalRealSeconds)
+                
+                let donkiFormatter = DateFormatter()
+                donkiFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm'Z'"
+                donkiFormatter.timeZone = TimeZone(secondsFromGMT: 0)
+                
+                let backupISOFormatter = ISO8601DateFormatter()
+                backupISOFormatter.formatOptions = [.withInternetDateTime]
+                
+                let geometryBuilder = CMEGeometryBuilder()
+                let sRadius = Float(sphere.radius)
+                let warpIntensity: Float = 0.05
+                
+                // --- NEW: CPU TOPOLOGICAL SAMPLER ---
+                print("Fetching AIA 193 image for CPU Topological Warping...")
+                let sdoService = NASASDOService()
+                var topologicalMap: [UInt8]? = nil
+                var mapWidth = 0
+                var mapHeight = 0
+                
+                if let coronalHoleMask = try? await sdoService.fetchLatestImage(wavelength: .aia193, resolution: 4096, cachedIfExists: cachedIfExists),
+                   let cgImage = coronalHoleMask.cgImage {
+                    mapWidth = cgImage.width
+                    mapHeight = cgImage.height
+                    let colorSpace = CGColorSpaceCreateDeviceGray()
+                    var rawData = [UInt8](repeating: 0, count: mapWidth * mapHeight)
+                    if let context = CGContext(data: &rawData, width: mapWidth, height: mapHeight, bitsPerComponent: 8, bytesPerRow: mapWidth, space: colorSpace, bitmapInfo: CGImageAlphaInfo.none.rawValue) {
+                        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: mapWidth, height: mapHeight))
+                        topologicalMap = rawData
+                        print("✅ CPU Topological Map successfully loaded (\(mapWidth)x\(mapHeight))")
+                    }
+                }
+                
+                // Reusable closure to mathematically warp a 3D point identically to the Metal shader
+                let applyTopologicalWarp: (simd_float3) -> simd_float3 = { pos in
+                    guard let map = topologicalMap, sRadius > 0 else { return pos }
+                    
+                    let normalizedPos = normalize(pos)
+                    
+                    // Calculate UV coordinates matching SceneKit's spherical mapping
+                    let u = 0.5 + atan2(normalizedPos.z, normalizedPos.x) / (2.0 * .pi)
+                    let v = 0.5 - asin(normalizedPos.y) / .pi
+                    
+                    let px = max(0, min(mapWidth - 1, Int(u * Float(mapWidth))))
+                    let py = max(0, min(mapHeight - 1, Int(v * Float(mapHeight))))
+                    
+                    let activityLevel = Float(map[py * mapWidth + px]) / 255.0
+                    
+                    let sinLat = normalizedPos.y
+                    let cosLat = sqrt(max(0.0, 1.0 - sinLat * sinLat))
+                    let oblateness = cosLat * 0.015
+                    
+                    let magneticBulge = (activityLevel - 0.1) * warpIntensity
+                    let totalDisplacement = (oblateness + magneticBulge) * sRadius
+                    
+                    return pos + (normalizedPos * totalDisplacement)
+                }
+                // -------------------------------------
+                
+                // --- FETCH, BUILD & DEFORM GLOBAL MAGNETIC LOOPS FROM FITS DATA ---
+                print("Fetching FITS Magnetogram...")
+                let magnetogramModeler = MagnetogramModeler()
+                
+                var openMagneticLines: [MagneticLoopLine] = []
+                var rawMagneticBuckets: [MagneticBucket] = []
+                var sharedMagneticVolume: MTLTexture? = nil
+                
+                if let fitsURL = try? await magnetogramModeler.fetchLatestSynopticMagnetogram(cachedIfExists: cachedIfExists),
+                   let magData = try? magnetogramModeler.processFitsFile(at: fitsURL) {
+                    
+                    // STAGE 1: THE AMBIENT FIELD
+                    rawMagneticBuckets = magnetogramModeler.exportRawBuckets(from: magData, thresholdGauss: 20.0)
+                    
+                    print("Generating Ambient 3D PFSS Vector Field...")
+                    let ambientPFSSArray = self.generateVolumetricFieldFromBuckets(
+                        device: device,
+                        buckets: rawMagneticBuckets,
+                        solarRadius: sRadius
+                    ).volumeData
+                    
+                    // STAGE 2: THE GEOMETRY DEFORMATION
+                    let magneticLoopStart = CACurrentMediaTime()
+                    var magneticLines = magnetogramModeler.calculateMagneticLoops(from: magData)
+                    
+                    // Intercept splines on CPU to apply ambient field deformation & Solar Rotation
+                    magneticLines = magneticLines.map { line in
+                        // 🚨 NEW: Warp the root points to match the GPU's active region bulging
+                        let warpedP0 = applyTopologicalWarp(line.p0)
+                        let warpedP2 = applyTopologicalWarp(line.p2)
+                        
+                        // A. Bend the apex based on the ambient voxel vectors
+                        var (newP0, newP1, newP2) = self.applyMagneticInfluenceToSpline(
+                            startPoint: warpedP0,
+                            apexPoint: line.p1,
+                            endPoint: warpedP2,
+                            isOpen: line.isOpen,
+                            pfssVolume: ambientPFSSArray,
+                            solarRadius: sRadius
+                        )
+                        
+                        // B. Apply the Archimedean Parker Spiral twisting force based on solar rotation
+                        if line.isOpen {
+                            newP1 = self.applySolarRotationShift(point: newP1, solarRadius: sRadius)
+                            newP2 = self.applySolarRotationShift(point: newP2, solarRadius: sRadius)
+                        } else {
+                            newP1 = self.applySolarRotationShift(point: newP1, solarRadius: sRadius, rotationRate: 0.25)
+                        }
+                        
+                        return MagneticLoopLine(p0: newP0, p1: newP1, p2: newP2, isOpen: line.isOpen, intensity: line.intensity)
+                    }
+                    
+                    let magneticLoopEnd = CACurrentMediaTime()
+                    print("generateCoronalSurfaceUsingMegnetoGram: processed & deformed magnetic loops in \(magneticLoopEnd - magneticLoopStart) seconds.")
+                    
+                    openMagneticLines = magneticLines.filter { $0.isOpen }
+                    
+                    // STAGE 3: THE FLOW FIELD (GPU RASTERIZATION)
+                    print("Generating final CME Flow Volume via Spline Rasterization...")
+                    let volumeResult = self.generateMagneticVolumeTexture(
+                        device: device,
+                        lines: magneticLines,
                         solarRadius: sRadius
                     )
+                    sharedMagneticVolume = volumeResult.texture
                     
-                    // B. Apply the Archimedean Parker Spiral twisting force based on solar rotation
-                    if line.isOpen {
-                        newP1 = self.applySolarRotationShift(point: newP1, solarRadius: sRadius)
-                        newP2 = self.applySolarRotationShift(point: newP2, solarRadius: sRadius)
-                    } else {
-                        newP1 = self.applySolarRotationShift(point: newP1, solarRadius: sRadius, rotationRate: 0.25)
-                    }
-                    
-                    return MagneticLoopLine(p0: newP0, p1: newP1, p2: newP2, isOpen: line.isOpen, intensity: line.intensity)
+                    // STAGE 4: VISUAL GEOMETRY
+                    let globalMagneticNode = geometryBuilder.createCoronalSurface(from: magneticLines, solarRadius: sRadius)
+                    coronalSurfaceNode.addChildNode(globalMagneticNode)
                 }
                 
-                let magneticLoopEnd = CACurrentMediaTime()
-                print("generateCoronalSurfaceUsingMegnetoGram: processed & deformed magnetic loops in \(magneticLoopEnd - magneticLoopStart) seconds.")
+                var firstIgnitionTime: Float? = nil
                 
-                openMagneticLines = magneticLines.filter { $0.isOpen }
-                
-                //  STAGE 3: THE FLOW FIELD (GPU RASTERIZATION)
-                // Rasterize the fully deformed splines into the final 3D Texture for the CMEs
-                print("Generating final CME Flow Volume via Spline Rasterization...")
-                let volumeResult = self.generateMagneticVolumeTexture(
-                    device: device,
-                    lines: magneticLines,
-                    solarRadius: sRadius
-                )
-                sharedMagneticVolume = volumeResult.texture
-                
-                //  STAGE 4: VISUAL GEOMETRY
-                // Construct and add the physical volumetric spline tubes to the scene
-                let globalMagneticNode = geometryBuilder.createCoronalSurface(from: magneticLines, solarRadius: sRadius)
-                coronalSurfaceNode.addChildNode(globalMagneticNode)
-            }
-            
-            var firstIgnitionTime: Float? = nil
-            
-            // 4. Generate and align each CME event ONLY if the flag is true
-            if renderCME {
-                // Create the SceneKit wrapper once outside the loop to protect memory channels
-                var sharedVolumeProperty: SCNMaterialProperty? = nil
-                if let magneticVolume = sharedMagneticVolume {
-                    sharedVolumeProperty = SCNMaterialProperty(contents: magneticVolume)
-                    print("✅ Shared PFSS Volume Property mapped safely to KVC engine.")
-                }
-                
-                // DYNAMIC THROTTLE: Distribute the max points across all active events to prevent vertex overflow
-                let calculatedPointsPerEvent = max(500, maxPointsPerCME / max(1, events.count))
-                
-                for event in events {
-                    guard event.latitude != nil, event.longitude != nil else { continue }
-                    
-                    let parsedDate = donkiFormatter.date(from: event.startTime) ?? backupISOFormatter.date(from: event.startTime)
-                    guard let eventDate = parsedDate else {
-                        print("Skipped CME: Unrecognized Date Format - \(event.startTime)")
-                        continue
+                // 4. Generate and align each CME event ONLY if the flag is true
+                if renderCME {
+                    var sharedVolumeProperty: SCNMaterialProperty? = nil
+                    if let magneticVolume = sharedMagneticVolume {
+                        sharedVolumeProperty = SCNMaterialProperty(contents: magneticVolume)
+                        print("✅ Shared PFSS Volume Property mapped safely to KVC engine.")
                     }
                     
-                    // Map the real timestamp into the loop timeline using our compression ratio
-                    let realIgnitionOffset = eventDate.timeIntervalSince(simulationStart)
-                    let safeIgnitionTime = Float(realIgnitionOffset * compressionRatio)
+                    let calculatedPointsPerEvent = max(500, maxPointsPerCME / max(1, events.count))
                     
-                    // Track the earliest ignition for the static timeline debugger
-                    if firstIgnitionTime == nil || safeIgnitionTime < firstIgnitionTime! {
-                        firstIgnitionTime = safeIgnitionTime
-                    }
-                    
-                    
-                    
-                    // Generate the specialized node using the SCNSphere's exact physical radius
-                    // ADDED: We now pass the openMagneticLines to map the DONKI event to the FITS splines
-                    let cmeNode = try! renderer.createCoronalEjectionNode(
-                        for: event,
-                        openLines: openMagneticLines,
-                        pointCount: 1000,
-                        solarRadius: Float(sphere.radius)
-                    )
-                    
-                    if let material = cmeNode.geometry?.materials.first {
-//                        material.setValue(NSNumber(value: safeIgnitionTime), forKey: "u_ignitionTime")
-                        var ignitionFloat = safeIgnitionTime
-                        let ignitionData = Data(bytes: &ignitionFloat, count: MemoryLayout<Float>.size)
-//                        material.setValue(ignitionData, forKey: "u_ignitionTime")
-
-                        // TODO: DIAGNOSTIC: Force all CMEs to erupt simultaneously at t=0
-                        material.setValue(NSNumber(value: Float(0.0)), forKey: "u_ignitionTime")
+                    for event in events {
+                        guard event.latitude != nil, event.longitude != nil else { continue }
                         
-                        //  FAIL-SAFE: Explicitly bind the missing sizing parameters
-                        material.setValue(NSNumber(value: sRadius), forKey: "u_solarRadius")
-                        material.setValue(NSNumber(value: Float(2.0)), forKey: "u_thickness") // Boosted for visibility
-                        material.setValue(NSNumber(value: Float(event.speed) ?? Float(500.0)), forKey: "u_speed")
-                        material.setValue(NSNumber(value: Float(event.halfAngle) ?? Float(20.0)), forKey: "u_halfAngle")
-
-                        
-                        // Bind the pre-allocated material property containing our 3D texture
-                        if let vp = sharedVolumeProperty {
-                            material.setValue(vp, forKey: "u_magneticVolume")
+                        let parsedDate = donkiFormatter.date(from: event.startTime) ?? backupISOFormatter.date(from: event.startTime)
+                        guard let eventDate = parsedDate else {
+                            print("Skipped CME: Unrecognized Date Format - \(event.startTime)")
+                            continue
                         }
+                        
+                        let realIgnitionOffset = eventDate.timeIntervalSince(simulationStart)
+                        let safeIgnitionTime = Float(realIgnitionOffset * compressionRatio)
+                        
+                        if firstIgnitionTime == nil || safeIgnitionTime < firstIgnitionTime! {
+                            firstIgnitionTime = safeIgnitionTime
+                        }
+                        
+                        // NOTE: The user's internal `createCoronalEjectionNode` logic calculates root positions.
+                        // If CMEs are strictly generated from the surface, they may also require the `applyTopologicalWarp`
+                        // inside `createCoronalEjectionNode` depending on its internal math structure.
+                        let cmeNode = try! renderer.createCoronalEjectionNode(
+                            for: event,
+                            openLines: openMagneticLines,
+                            pointCount: 1000,
+                            solarRadius: Float(sphere.radius)
+                        )
+                        
+                        if let material = cmeNode.geometry?.materials.first {
+                            material.setValue(NSNumber(value: Float(0.0)), forKey: "u_ignitionTime") // DIAGNOSTIC OVERRIDE
+                            
+                            material.setValue(NSNumber(value: sRadius), forKey: "u_solarRadius")
+                            material.setValue(NSNumber(value: Float(2.0)), forKey: "u_thickness")
+                            material.setValue(NSNumber(value: Float(event.speed) ?? Float(500.0)), forKey: "u_speed")
+                            material.setValue(NSNumber(value: Float(event.halfAngle) ?? Float(20.0)), forKey: "u_halfAngle")
+
+                            if let vp = sharedVolumeProperty {
+                                material.setValue(vp, forKey: "u_magneticVolume")
+                            }
+                        }
+                        coronalSurfaceNode.addChildNode(cmeNode)
                     }
-                    coronalSurfaceNode.addChildNode(cmeNode)
                 }
-            }
-            
-            // 5. Apply Solar Surface Materials (NOAA + NASA SDO Composite)
-            try await applySolarSurfaceMaterials(to: sphere, cachedIfExists: cachedIfExists)
-            
-            // --- STATIC TIMELINE DEBUGGER ---
-            if let firstEventTime = firstIgnitionTime {
-                // We set the global clock to exactly 5 visual seconds after the first CME erupts
-                let debugGlobalTime = firstEventTime + 5.0
-                print("⏱️ Static Timeline Set: Earliest CME ignited at \(firstEventTime)s. Fast-forwarding to \(debugGlobalTime)s.")
+                
+                // 5. Apply Solar Surface Materials (NOAA + NASA SDO Composite)
+                try await applySolarSurfaceMaterials(to: sphere, cachedIfExists: cachedIfExists)
+                
+                // --- STATIC TIMELINE DEBUGGER ---
+                let debugGlobalTime: Float = 5.0
+                print("⏱️ Diagnostic Override: Forcing global clock to \(debugGlobalTime)s for all CMEs.")
                 
                 coronalSurfaceNode.childNodes.forEach { node in
                     if let material = node.geometry?.materials.first, material.value(forKey: "u_ignitionTime") != nil {
                         material.setValue(NSNumber(value: debugGlobalTime), forKey: "u_globalTime")
                     }
                 }
+                return coronalSurfaceNode
             }
-
-            // --- STATIC TIMELINE DEBUGGER ---
-                    //  OVERRIDE: Force the global clock to exactly 5.0 seconds
-                    let debugGlobalTime: Float = 5.0
-                    print("⏱️ Diagnostic Override: Forcing global clock to \(debugGlobalTime)s for all CMEs.")
-                    
-                    coronalSurfaceNode.childNodes.forEach { node in
-                        if let material = node.geometry?.materials.first, material.value(forKey: "u_ignitionTime") != nil {
-                            material.setValue(NSNumber(value: debugGlobalTime), forKey: "u_globalTime")
-                        }
-                    }
-            return coronalSurfaceNode
-        }
 
     public func addDistortionTechniqueToScene(sceneView: SCNView) {
         let techniqueDict: [String: Any] = [
