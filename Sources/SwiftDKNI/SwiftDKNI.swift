@@ -422,7 +422,7 @@ extension SwiftDKNI {
                     "type": "float"
                 ],
                 "starTintSymbol": [
-                    "type": "vec4" // 🚨 FIX 1: Correct SceneKit string syntax for a 4D vector
+                    "type": "vec4"
                 ]
             ],
             "passes": [
@@ -430,13 +430,21 @@ extension SwiftDKNI {
                 "mainScenePass": [
                     "draw": "DRAW_SCENE",
                     "inputs": [:],
-                    "outputs": ["color": "SCENE_BUFFER"]
+                    // 🚨 FIX 2: Added depth buffer output to prevent render initialization failures
+                    "outputs": [
+                        "color": "SCENE_BUFFER",
+                        "depth": "DEPTH_BUFFER"
+                    ]
                 ],
                 // PASS 2: Isolate the categoryBitMask 4 CMEs
                 "cmePass": [
                     "draw": "DRAW_SCENE",
                     "inputs": [:],
-                    "outputs": ["color": "CME_BUFFER"],
+                    // 🚨 FIX 2: Shares the depth buffer so CMEs are physically occluded by the sun
+                    "outputs": [
+                        "color": "CME_BUFFER",
+                        "depth": "DEPTH_BUFFER"
+                    ],
                     "includeCategoryMask": 4
                 ],
                 // PASS 3: Refraction calculation
@@ -474,11 +482,12 @@ extension SwiftDKNI {
                 ]
             ],
             "targets": [
-                // 🚨 FIX 2: Removed forced pixelFormats so Metal can safely assign optimal types
-                "CME_BUFFER": ["type": "color", "size": "relative", "scaleFactor": 1.0],
-                "SCENE_BUFFER": ["type": "color", "size": "relative", "scaleFactor": 1.0],
-                "DISTORTED_BUFFER": ["type": "color", "size": "relative", "scaleFactor": 1.0],
-                "BLURRED_BUFFER": ["type": "color", "size": "relative", "scaleFactor": 1.0]
+                "CME_BUFFER": ["type": "color", "size": "relative"],
+                "SCENE_BUFFER": ["type": "color", "size": "relative"],
+                "DISTORTED_BUFFER": ["type": "color", "size": "relative"],
+                "BLURRED_BUFFER": ["type": "color", "size": "relative"],
+                // 🚨 FIX 2: Physically defined depth target in memory
+                "DEPTH_BUFFER": ["type": "depth", "size": "relative"]
             ],
             "sequence": ["mainScenePass", "cmePass", "distortionPass", "blurPass", "tintPass"]
         ]
@@ -488,7 +497,6 @@ extension SwiftDKNI {
             return
         }
         
-        // 🚨 FIX 3: Safely wrap the vector inside an NSValue for the SceneKit KVC engine
         let tintValue = NSValue(scnVector4: SCNVector4(
             CGFloat(initialTint.x),
             CGFloat(initialTint.y),
@@ -497,7 +505,6 @@ extension SwiftDKNI {
         ))
         
         technique.setValue(tintValue, forKey: "starTintSymbol")
-        
         sceneView.technique = technique
     }
     
