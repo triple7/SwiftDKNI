@@ -178,8 +178,8 @@ extension SwiftDKNI {
         }
         
         // --- 2. PRECOMPUTE THE SIMD VOLUMETRIC BRUSH KERNEL ---
-        let brushRadius = 2
-        let maxDistance = Float(brushRadius) + 0.5
+        let brushRadius = 3
+        let maxDistance = Float(brushRadius) + 1.0
         var brushKernel: [BrushOffset] = []
         
         for dx in -brushRadius...brushRadius {
@@ -188,7 +188,7 @@ extension SwiftDKNI {
                     let dist = sqrt(Float(dx*dx + dy*dy + dz*dz))
                     let falloff = max(0.0, 1.0 - (dist / maxDistance))
                     
-                    if falloff > 0.0001 { // Optimization threshold
+                    if falloff > 0.0 { // Optimization threshold
                         brushKernel.append(BrushOffset(dx: dx, dy: dy, dz: dz, weight: falloff))
                     }
                 }
@@ -197,7 +197,7 @@ extension SwiftDKNI {
         
         // --- 3. RASTERIZE WITH UNROLLED MEMORY POINTERS ---
         var volumeData = [simd_float4](repeating: simd_float4(0, 0, 0, 0), count: voxelCount)
-        let samplesPerLine = 100
+        let samplesPerLine = 200
         var outOfBoundsCount = 0
         
         volumeData.withUnsafeMutableBufferPointer { buffer in
