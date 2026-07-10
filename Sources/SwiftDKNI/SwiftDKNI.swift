@@ -434,21 +434,24 @@ extension SwiftDKNI {
                         "color": "SCENE_BUFFER",
                         "depth": "DEPTH_BUFFER"
                     ],
-                    // 🚨 PREVENTS DOUBLE RENDER: Do not draw CMEs in the base pass
+                    "colorStates": ["clear": true],
+                    "depthStates": ["clear": true],
                     "excludeCategoryMask": 4
                 ],
                 // PASS 2: Isolate the CMEs on a transparent background
                 "cmePass": [
                     "draw": "DRAW_SCENE",
+                    // 🚨 THE REAL GRAPH FIX: Using a recognized sampler name forces Metal's DAG compiler to wait for mainScenePass
                     "inputs": [
-                        // 🚨 THE GRAPH FIX: This dummy input mathematically forces Metal
-                        // to evaluate mainScenePass first, preventing the dependency crash.
-                        "forceDependency": "SCENE_BUFFER"
+                        "colorSampler": "SCENE_BUFFER"
                     ],
                     "outputs": [
                         "color": "CME_BUFFER",
-                        "depth": "DEPTH_BUFFER" // Shares depth so CMEs are physically occluded by the sun
+                        "depth": "DEPTH_BUFFER"
                     ],
+                    // 🚨 THE OCCLUSION FIX: Do not clear the depth buffer! This allows the sun to physically hide CMEs behind it.
+                    "colorStates": ["clear": true],
+                    "depthStates": ["clear": false, "enableWrite": true, "enableRead": true],
                     "includeCategoryMask": 4
                 ],
                 // PASS 3: Refraction calculation
