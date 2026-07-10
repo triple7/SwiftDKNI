@@ -417,8 +417,12 @@ extension SwiftDKNI {
     public func addDistortionTechniqueToScene(sceneView: SCNView, initialTint: simd_float4 = simd_float4(1.0, 0.92, 0.80, 1.0)) {
         let techniqueDict: [String: Any] = [
             "symbols": [
+                "timeSymbol": [
+                    "semantic": "time",
+                    "type": "float"
+                ],
                 "starTintSymbol": [
-                    "type": "vector4" // Fed to the Gaia Tint Shader at buffer(1)
+                    "type": "vector4"
                 ]
             ],
             "passes": [
@@ -442,7 +446,8 @@ extension SwiftDKNI {
                     "metalFragmentShader": "distortionFragment",
                     "inputs": [
                         "colorSampler": "SCENE_BUFFER",
-                        "refractionSampler": "CME_BUFFER"
+                        "refractionSampler": "CME_BUFFER",
+                        "time": "timeSymbol" // Restored to match your original time uniform
                     ],
                     "outputs": ["color": "DISTORTED_BUFFER"]
                 ],
@@ -479,7 +484,6 @@ extension SwiftDKNI {
         
         let technique = SCNTechnique(dictionary: techniqueDict)
         
-        // Pass the structural color map into the symbol
         let tintData = Data(bytes: [initialTint], count: MemoryLayout<simd_float4>.size)
         technique?.setValue(tintData, forKey: "starTintSymbol")
         
