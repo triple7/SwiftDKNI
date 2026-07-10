@@ -417,41 +417,36 @@ extension SwiftDKNI {
     public func addDistortionTechniqueToScene(sceneView: SCNView, initialTint: simd_float4 = simd_float4(1.0, 0.92, 0.80, 1.0)) {
         let techniqueDict: [String: Any] = [
             "symbols": [
-                "timeSymbol": [
-                    "semantic": "time",
-                    "type": "float"
-                ],
                 "starTintSymbol": [
-                    "type": "vector4" // Passed to the Gaia Tint Shader
+                    "type": "vector4" // Fed to the Gaia Tint Shader at buffer(1)
                 ]
             ],
             "passes": [
-                // PASS 1: Render base universe
+                // PASS 1: Base render pass
                 "mainScenePass": [
                     "draw": "DRAW_SCENE",
                     "inputs": [:],
                     "outputs": ["color": "SCENE_BUFFER"]
                 ],
-                // PASS 2: Render CMEs using Category Mask 4
+                // PASS 2: Isolate the categoryBitMask 4 CMEs
                 "cmePass": [
                     "draw": "DRAW_SCENE",
                     "inputs": [:],
                     "outputs": ["color": "CME_BUFFER"],
                     "includeCategoryMask": 4
                 ],
-                // PASS 3: Refraction Warp using CME alpha profiles
+                // PASS 3: Refraction calculation
                 "distortionPass": [
                     "draw": "DRAW_QUAD",
                     "metalVertexShader": "distortionVertex",
                     "metalFragmentShader": "distortionFragment",
                     "inputs": [
                         "colorSampler": "SCENE_BUFFER",
-                        "refractionSampler": "CME_BUFFER",
-                        "time": "timeSymbol"
+                        "refractionSampler": "CME_BUFFER"
                     ],
-                    "outputs": ["color": "DISTORTED_BUFFER"] // Pipes output forward
+                    "outputs": ["color": "DISTORTED_BUFFER"]
                 ],
-                // PASS 4: Heat Haze Blur
+                // PASS 4: Chromatic Heat Haze Blur
                 "blurPass": [
                     "draw": "DRAW_QUAD",
                     "metalVertexShader": "distortionVertex",
@@ -459,9 +454,9 @@ extension SwiftDKNI {
                     "inputs": [
                         "sceneToBlur": "DISTORTED_BUFFER"
                     ],
-                    "outputs": ["color": "BLURRED_BUFFER"] // Pipes output forward
+                    "outputs": ["color": "BLURRED_BUFFER"]
                 ],
-                // PASS 5: Gaia Spectral Tinting
+                // PASS 5: Gaia Tint Filter
                 "tintPass": [
                     "draw": "DRAW_QUAD",
                     "metalVertexShader": "distortionVertex",
@@ -470,7 +465,7 @@ extension SwiftDKNI {
                         "blurredScene": "BLURRED_BUFFER",
                         "starTint": "starTintSymbol"
                     ],
-                    "outputs": ["color": "COLOR"] // Output to viewport display
+                    "outputs": ["color": "COLOR"]
                 ]
             ],
             "targets": [
@@ -484,7 +479,7 @@ extension SwiftDKNI {
         
         let technique = SCNTechnique(dictionary: techniqueDict)
         
-        // Map the default solar color to the filter profile symbol
+        // Pass the structural color map into the symbol
         let tintData = Data(bytes: [initialTint], count: MemoryLayout<simd_float4>.size)
         technique?.setValue(tintData, forKey: "starTintSymbol")
         
