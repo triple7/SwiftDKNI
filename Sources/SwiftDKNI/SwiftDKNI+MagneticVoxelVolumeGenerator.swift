@@ -188,7 +188,7 @@ extension SwiftDKNI {
                     let dist = sqrt(Float(dx*dx + dy*dy + dz*dz))
                     let falloff = max(0.0, 1.0 - (dist / maxDistance))
                     
-                    if falloff > 0.05 { // Optimization threshold
+                    if falloff > 0.0001 { // Optimization threshold
                         brushKernel.append(BrushOffset(dx: dx, dy: dy, dz: dz, weight: falloff))
                     }
                 }
