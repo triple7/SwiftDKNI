@@ -422,7 +422,7 @@ extension SwiftDKNI {
                     "type": "float"
                 ],
                 "starTintSymbol": [
-                    "type": "vector4"
+                    "type": "vec4" // 🚨 FIX 1: Correct SceneKit string syntax for a 4D vector
                 ]
             ],
             "passes": [
@@ -447,7 +447,7 @@ extension SwiftDKNI {
                     "inputs": [
                         "colorSampler": "SCENE_BUFFER",
                         "refractionSampler": "CME_BUFFER",
-                        "time": "timeSymbol" // Restored to match your original time uniform
+                        "time": "timeSymbol"
                     ],
                     "outputs": ["color": "DISTORTED_BUFFER"]
                 ],
@@ -474,18 +474,29 @@ extension SwiftDKNI {
                 ]
             ],
             "targets": [
-                "CME_BUFFER": ["type": "color", "size": "relative", "scaleFactor": 1.0, "pixelFormat": "rgba8"],
-                "SCENE_BUFFER": ["type": "color", "size": "relative", "scaleFactor": 1.0, "pixelFormat": "rgba8"],
-                "DISTORTED_BUFFER": ["type": "color", "size": "relative", "scaleFactor": 1.0, "pixelFormat": "rgba8"],
-                "BLURRED_BUFFER": ["type": "color", "size": "relative", "scaleFactor": 1.0, "pixelFormat": "rgba8"]
+                // 🚨 FIX 2: Removed forced pixelFormats so Metal can safely assign optimal types
+                "CME_BUFFER": ["type": "color", "size": "relative", "scaleFactor": 1.0],
+                "SCENE_BUFFER": ["type": "color", "size": "relative", "scaleFactor": 1.0],
+                "DISTORTED_BUFFER": ["type": "color", "size": "relative", "scaleFactor": 1.0],
+                "BLURRED_BUFFER": ["type": "color", "size": "relative", "scaleFactor": 1.0]
             ],
             "sequence": ["mainScenePass", "cmePass", "distortionPass", "blurPass", "tintPass"]
         ]
         
-        let technique = SCNTechnique(dictionary: techniqueDict)
+        guard let technique = SCNTechnique(dictionary: techniqueDict) else {
+            print("Failed to compile SCNTechnique dictionary.")
+            return
+        }
         
-        let tintData = Data(bytes: [initialTint], count: MemoryLayout<simd_float4>.size)
-        technique?.setValue(tintData, forKey: "starTintSymbol")
+        // 🚨 FIX 3: Safely wrap the vector inside an NSValue for the SceneKit KVC engine
+        let tintValue = NSValue(scnVector4: SCNVector4(
+            CGFloat(initialTint.x),
+            CGFloat(initialTint.y),
+            CGFloat(initialTint.z),
+            CGFloat(initialTint.w)
+        ))
+        
+        technique.setValue(tintValue, forKey: "starTintSymbol")
         
         sceneView.technique = technique
     }
