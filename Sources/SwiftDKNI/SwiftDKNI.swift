@@ -57,7 +57,7 @@ extension SwiftDKNI {
                 return
             }
             
-            sphere.segmentCount = 200
+            sphere.segmentCount = 400
             baseMaterial.lightingModel = .constant
             let sdoService = NASASDOService()
             
