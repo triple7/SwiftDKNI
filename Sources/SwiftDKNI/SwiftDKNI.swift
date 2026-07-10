@@ -74,9 +74,6 @@ extension SwiftDKNI {
             // --- LAYER 3: Atmospheric Coronal Holes (AIA 193) ---
             if let coronalHoleMask = try? await sdoService.fetchLatestImage(wavelength: .aia193, resolution: 4096, cachedIfExists: cachedIfExists) {
                 baseMaterial.transparent.contents = coronalHoleMask
-                
-                //  BINDING: Pass the exact same NASA image into the shader to act as a 3D height map
-                baseMaterial.setValue(baseMaterial.transparent, forKey: "u_activeRegionMap")
             } else {
     #if os(macOS)
                 baseMaterial.transparent.contents = NSColor.white
@@ -84,7 +81,9 @@ extension SwiftDKNI {
                 baseMaterial.transparent.contents = UIColor.white
     #endif
             }
-            
+            //  BINDING: Pass the exact same NASA image into the shader to act as a 3D height map
+            baseMaterial.setValue(baseMaterial.transparent, forKey: "u_activeRegionMap")
+
             // Set the warp intensity (0.05 = 5% of solar radius)
             baseMaterial.setValue(Float(0.05), forKey: "u_warpIntensity")
             
@@ -256,16 +255,18 @@ extension SwiftDKNI {
                     
                     let normalizedPos = normalize(pos)
                     
+                    let clampedY = max(-1.0, min(1.0, normalizedPos.y))
+                    
                     // Calculate UV coordinates matching SceneKit's spherical mapping
-                    let u = 0.5 + atan2(normalizedPos.z, normalizedPos.x) / (2.0 * .pi)
-                    let v = 0.5 - asin(normalizedPos.y) / .pi
+                    let u = 0.5 + atan2(normalizedPos.z, normalizedPos.x) / (2.0 * Float.pi)
+                    let v = 0.5 - asin(clampedY) / Float.pi
                     
                     let px = max(0, min(mapWidth - 1, Int(u * Float(mapWidth))))
                     let py = max(0, min(mapHeight - 1, Int(v * Float(mapHeight))))
                     
                     let activityLevel = Float(map[py * mapWidth + px]) / 255.0
                     
-                    let sinLat = normalizedPos.y
+                    let sinLat = clampedY // Reuse the safe Y value
                     let cosLat = sqrt(max(0.0, 1.0 - sinLat * sinLat))
                     let oblateness = cosLat * 0.015
                     
@@ -273,8 +274,7 @@ extension SwiftDKNI {
                     let totalDisplacement = (oblateness + magneticBulge) * sRadius
                     
                     return pos + (normalizedPos * totalDisplacement)
-                }
-                // -------------------------------------
+                }                // -------------------------------------
                 
                 // --- FETCH, BUILD & DEFORM GLOBAL MAGNETIC LOOPS FROM FITS DATA ---
                 print("Fetching FITS Magnetogram...")
