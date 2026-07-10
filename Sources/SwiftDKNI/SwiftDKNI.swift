@@ -415,103 +415,95 @@ extension SwiftDKNI {
     }
     
     public func addDistortionTechniqueToScene(sceneView: SCNView, initialTint: simd_float4 = simd_float4(1.0, 0.92, 0.80, 1.0)) {
-        let techniqueDict: [String: Any] = [
-            "symbols": [
-                "timeSymbol": [
-                    "semantic": "time",
-                    "type": "float"
+            let techniqueDict: [String: Any] = [
+                "symbols": [
+                    "timeSymbol": [
+                        "semantic": "time",
+                        "type": "float"
+                    ],
+                    "starTintSymbol": [
+                        "type": "vec4"
+                    ]
                 ],
-                "starTintSymbol": [
-                    "type": "vec4"
-                ]
-            ],
-            "passes": [
-                // PASS 1: Base render pass (Sun + Starfield)
-                "mainScenePass": [
-                    "draw": "DRAW_SCENE",
-                    "inputs": [:],
-                    "outputs": [
-                        "color": "SCENE_BUFFER",
-                        "depth": "DEPTH_BUFFER"
+                "passes": [
+                    // PASS 1: Base render pass (Sun + Starfield)
+                    "mainScenePass": [
+                        "draw": "DRAW_SCENE",
+                        "inputs": [:],
+                        // 🚨 FIX 2: No custom depth target. Implicitly uses SceneKit's internal depth.
+                        "outputs": [
+                            "color": "SCENE_BUFFER"
+                        ],
+                        "excludeCategoryMask": 4
                     ],
-                    "colorStates": ["clear": true],
-                    "depthStates": ["clear": true],
-                    "excludeCategoryMask": 4
+                    // PASS 2: Isolate the CMEs on a transparent background
+                    "cmePass": [
+                        "draw": "DRAW_SCENE",
+                        "inputs": [:],
+                        // 🚨 FIX 2: Shares internal depth with Pass 1 automatically for occlusion.
+                        "outputs": [
+                            "color": "CME_BUFFER"
+                        ],
+                        "includeCategoryMask": 4
+                    ],
+                    // PASS 3: Refraction calculation
+                    "distortionPass": [
+                        "draw": "DRAW_QUAD",
+                        "metalVertexShader": "distortionVertex",
+                        "metalFragmentShader": "distortionFragment",
+                        "inputs": [
+                            "colorSampler": "SCENE_BUFFER",
+                            "refractionSampler": "CME_BUFFER",
+                            "time": "timeSymbol"
+                        ],
+                        "outputs": ["color": "DISTORTED_BUFFER"]
+                    ],
+                    // PASS 4: Chromatic Heat Haze Blur
+                    "blurPass": [
+                        "draw": "DRAW_QUAD",
+                        "metalVertexShader": "distortionVertex",
+                        "metalFragmentShader": "blurFragment",
+                        "inputs": [
+                            "sceneToBlur": "DISTORTED_BUFFER"
+                        ],
+                        "outputs": ["color": "BLURRED_BUFFER"]
+                    ],
+                    // PASS 5: Gaia Tint Filter
+                    "tintPass": [
+                        "draw": "DRAW_QUAD",
+                        "metalVertexShader": "distortionVertex",
+                        "metalFragmentShader": "tintFragment",
+                        "inputs": [
+                            "blurredScene": "BLURRED_BUFFER",
+                            "starTint": "starTintSymbol"
+                        ],
+                        "outputs": ["color": "COLOR"]
+                    ]
                 ],
-                // PASS 2: Isolate the CMEs on a transparent background
-                "cmePass": [
-                    "draw": "DRAW_SCENE",
-                    "inputs": [
-                        // The DAG fix: Forces this pass to wait for mainScenePass
-                        "dummyDependency": "SCENE_BUFFER"
-                    ],
-                    "outputs": [
-                        "color": "CME_BUFFER",
-                        "depth": "DEPTH_BUFFER"
-                    ],
-                    // The Occlusion fix: Do not clear depth so the sun hides CMEs behind it
-                    "colorStates": ["clear": true],
-                    "depthStates": ["clear": false, "enableWrite": true, "enableRead": true],
-                    "includeCategoryMask": 4
+                "targets": [
+                    "CME_BUFFER": ["type": "color", "size": "relative"],
+                    "SCENE_BUFFER": ["type": "color", "size": "relative"],
+                    "DISTORTED_BUFFER": ["type": "color", "size": "relative"],
+                    "BLURRED_BUFFER": ["type": "color", "size": "relative"]
+                    // 🚨 FIX 2: The custom DEPTH_BUFFER has been completely deleted.
                 ],
-                // PASS 3: Refraction calculation
-                "distortionPass": [
-                    "draw": "DRAW_QUAD",
-                    "metalVertexShader": "distortionVertex",
-                    "metalFragmentShader": "distortionFragment",
-                    "inputs": [
-                        "colorSampler": "SCENE_BUFFER",
-                        "refractionSampler": "CME_BUFFER",
-                        "time": "timeSymbol"
-                    ],
-                    "outputs": ["color": "DISTORTED_BUFFER"]
-                ],
-                // PASS 4: Chromatic Heat Haze Blur
-                "blurPass": [
-                    "draw": "DRAW_QUAD",
-                    "metalVertexShader": "distortionVertex",
-                    "metalFragmentShader": "blurFragment",
-                    "inputs": [
-                        "sceneToBlur": "DISTORTED_BUFFER"
-                    ],
-                    "outputs": ["color": "BLURRED_BUFFER"]
-                ],
-                // PASS 5: Gaia Tint Filter
-                "tintPass": [
-                    "draw": "DRAW_QUAD",
-                    "metalVertexShader": "distortionVertex",
-                    "metalFragmentShader": "tintFragment",
-                    "inputs": [
-                        "blurredScene": "BLURRED_BUFFER",
-                        "starTint": "starTintSymbol"
-                    ],
-                    "outputs": ["color": "COLOR"]
-                ]
-            ],
-            "targets": [
-                "CME_BUFFER": ["type": "color", "size": "relative"],
-                "SCENE_BUFFER": ["type": "color", "size": "relative"],
-                "DISTORTED_BUFFER": ["type": "color", "size": "relative"],
-                "BLURRED_BUFFER": ["type": "color", "size": "relative"],
-                "DEPTH_BUFFER": ["type": "depth", "size": "relative"]
-            ],
-            "sequence": ["mainScenePass", "cmePass", "distortionPass", "blurPass", "tintPass"]
-        ]
-        
-        guard let technique = SCNTechnique(dictionary: techniqueDict) else {
-            print("Failed to compile SCNTechnique dictionary.")
-            return
+                "sequence": ["mainScenePass", "cmePass", "distortionPass", "blurPass", "tintPass"]
+            ]
+            
+            guard let technique = SCNTechnique(dictionary: techniqueDict) else {
+                print("Failed to compile SCNTechnique dictionary.")
+                return
+            }
+            
+            let tintValue = NSValue(scnVector4: SCNVector4(
+                CGFloat(initialTint.x),
+                CGFloat(initialTint.y),
+                CGFloat(initialTint.z),
+                CGFloat(initialTint.w)
+            ))
+            
+            technique.setValue(tintValue, forKey: "starTintSymbol")
+            sceneView.technique = technique
         }
-        
-        let tintValue = NSValue(scnVector4: SCNVector4(
-            CGFloat(initialTint.x),
-            CGFloat(initialTint.y),
-            CGFloat(initialTint.z),
-            CGFloat(initialTint.w)
-        ))
-        
-        technique.setValue(tintValue, forKey: "starTintSymbol")
-        sceneView.technique = technique
-    }
     
 }
