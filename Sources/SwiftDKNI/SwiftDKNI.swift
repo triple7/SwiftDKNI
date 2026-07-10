@@ -41,45 +41,6 @@ final public class SwiftDKNI: Sendable {
 // MARK: - Surface Generation Extension
 extension SwiftDKNI {
 
-    private func createTopologicalWarpShader() -> String {
-        let solarTopologyShader = """
-        #pragma arguments
-        float u_warpIntensity;
-        texture2d<float, access::sample> u_activeRegionMap;
-
-        #pragma body
-        constexpr sampler texSampler(coord::normalized, address::clamp_to_edge, filter::linear);
-
-        // 1. Read the 4096 NASA Image as a topological height map
-        float2 uv = _geometry.texcoords[0];
-        float4 mapData = u_activeRegionMap.sample(texSampler, uv);
-
-        // The 171/193 angstrom images are bright white in active magnetic regions.
-        float activityLevel = mapData.r; 
-
-        // 2. The Rotational Oblateness (Equatorial Bulge)
-        float3 currentPos = _geometry.position.xyz;
-        float3 surfaceNormal = _geometry.normal;
-        float baseRadius = length(currentPos);
-
-        // Calculate latitude. Y-axis is up, so (y / radius) gives sin(latitude).
-        float sinLat = currentPos.y / baseRadius;
-        float cosLat = sqrt(max(0.0f, 1.0f - (sinLat * sinLat))); // 1.0 at equator, 0.0 at poles
-
-        // Exaggerated equatorial bulge (e.g., 1.5% fatter at the equator due to rotation twist)
-        float oblateness = cosLat * 0.015f; 
-
-        // 3. Magnetic Warping (Active Regions push the plasma outward)
-        // We subtract 0.1 so quiet coronal holes dip slightly, and bright active regions bulge heavily.
-        float magneticBulge = (activityLevel - 0.1f) * u_warpIntensity;
-
-        // 4. Apply the combined topological warp along the vertex normal
-        float totalDisplacement = (oblateness + magneticBulge) * baseRadius;
-        _geometry.position.xyz = currentPos + (surfaceNormal * totalDisplacement);
-        """
-        return solarTopologyShader
-    }
-
     
     private func applySolarSurfaceMaterials(
             to sphere: SCNSphere,
@@ -115,8 +76,7 @@ extension SwiftDKNI {
                 baseMaterial.transparent.contents = coronalHoleMask
                 
                 //  BINDING: Pass the exact same NASA image into the shader to act as a 3D height map
-                let activeRegionMapProperty = SCNMaterialProperty(contents: coronalHoleMask)
-                baseMaterial.setValue(activeRegionMapProperty, forKey: "u_activeRegionMap")
+                baseMaterial.setValue(baseMaterial.transparent, forKey: "u_activeRegionMap")
             } else {
     #if os(macOS)
                 baseMaterial.transparent.contents = NSColor.white
@@ -158,7 +118,7 @@ extension SwiftDKNI {
                 
                 float3 currentPos = _geometry.position.xyz;
                 float3 surfaceNormal = _geometry.normal;
-                float baseRadius = length(currentPos);
+                float baseRadius = max(length(currentPos), 0.001f);
                 
                 // Equatorial Bulge (Centrifugal rotation twist)
                 float sinLat = currentPos.y / baseRadius;
