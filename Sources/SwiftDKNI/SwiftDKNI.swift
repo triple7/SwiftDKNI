@@ -441,15 +441,15 @@ extension SwiftDKNI {
                 // PASS 2: Isolate the CMEs on a transparent background
                 "cmePass": [
                     "draw": "DRAW_SCENE",
-                    // 🚨 THE REAL GRAPH FIX: Using a recognized sampler name forces Metal's DAG compiler to wait for mainScenePass
                     "inputs": [
-                        "colorSampler": "SCENE_BUFFER"
+                        // The DAG fix: Forces this pass to wait for mainScenePass
+                        "dummyDependency": "SCENE_BUFFER"
                     ],
                     "outputs": [
                         "color": "CME_BUFFER",
                         "depth": "DEPTH_BUFFER"
                     ],
-                    // 🚨 THE OCCLUSION FIX: Do not clear the depth buffer! This allows the sun to physically hide CMEs behind it.
+                    // The Occlusion fix: Do not clear depth so the sun hides CMEs behind it
                     "colorStates": ["clear": true],
                     "depthStates": ["clear": false, "enableWrite": true, "enableRead": true],
                     "includeCategoryMask": 4
