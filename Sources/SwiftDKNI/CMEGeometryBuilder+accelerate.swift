@@ -173,7 +173,7 @@ extension CMEGeometryBuilder {
             let geometry = SCNGeometry(sources: [vertexSource, normalSource, uv0Source, uv1Source, uv2Source, colorSource], elements: [element])
             
             let material = SCNMaterial()
-            material.lightingModel = .constant
+            material.lightingModel = .physicallyBased
             material.blendMode = .add
             material.writesToDepthBuffer = false
             material.readsFromDepthBuffer = true
@@ -184,6 +184,11 @@ extension CMEGeometryBuilder {
             material.ambient.contents = dummyTex
             material.specular.contents = dummyTex
         material.transparent.contents = dummyTex
+
+        // 2. CRITICAL: Activate the emission channel with the dummy texture
+        // so the shader modifier has a channel to write light data into.
+        material.emission.contents = dummyTex
+
         let fileManager = FileManager.default
             let docsDir = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
             let starsDirectoryURL = docsDir.appendingPathComponent("stars")
@@ -227,7 +232,9 @@ extension CMEGeometryBuilder {
                 material.setValue(NSValue(scnVector3: midColor), forKey: "u_midColor")
                 let edgeColor = SCNVector3(0.4, 0.02, 0.0)
                 material.setValue(NSValue(scnVector3: edgeColor), forKey: "u_edgeColor")
-                
+
+                var hdrMultiplier: Float = 3.5
+                material.setValue(Data(bytes: &hdrMultiplier, count: MemoryLayout<Float>.size), forKey: "u_hdrMultiplier")
             } catch {
                 print("CRITICAL: Failed to load shader files: \(error)")
                 material.shaderModifiers = [:]
