@@ -31,7 +31,6 @@ final public class SwiftDKNI: Sendable {
     
     // Hold references to our pipeline services
     private let donkiService = DONKIService()
-    private let renderer = CMEFluxRopeRenderer()
     
     private init(apiKey: String) {
         self.apiKey = apiKey
@@ -211,6 +210,7 @@ extension SwiftDKNI {
             }
         }
     
+
     /// Fetches, generates, and time-aligns all CME events into a single container node.
     /// - Parameters:
     ///   - sphere: The central SCNSphere whose radius dictates the starting boundary.
@@ -433,7 +433,7 @@ extension SwiftDKNI {
                     // NOTE: The user's internal `createCoronalEjectionNode` logic calculates root positions.
                     // If CMEs are strictly generated from the surface, they may also require the `applyTopologicalWarp`
                     // inside `createCoronalEjectionNode` depending on its internal math structure.
-                    let cmeNode = try! renderer.createCoronalEjectionNode(
+                    let cmeNode = try! geometryBuilder.createCoronalEjectionNode(
                         for: event,
                         openLines: openMagneticLines,
                         pointCount: 1000,
