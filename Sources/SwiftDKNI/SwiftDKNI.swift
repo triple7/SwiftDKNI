@@ -40,8 +40,7 @@ final public class SwiftDKNI: Sendable {
 
 // MARK: - Surface Generation Extension
 extension SwiftDKNI {
-    
-    
+
     private func applySolarSurfaceMaterials(
             to sphere: SCNSphere,
             topologicalImage: Any?, // Accept the pre-fetched image directly
@@ -74,92 +73,121 @@ extension SwiftDKNI {
 
             let sdoService = NASASDOService()
             
-            // --- LAYER 1: Core Surface Plasma (AIA 171) ---
-            // We keep the texture in the diffuse channel purely as a data carrier for the shader to read
+            // --- DATA ROUTING ---
+            // LAYER 1: Core Surface Plasma (AIA 171) on Diffuse
             if let liveSunTexture = try? await sdoService.fetchLatestImage(wavelength: .aia171, resolution: 4096, cachedIfExists: cachedIfExists) {
                 baseMaterial.diffuse.contents = liveSunTexture
             }
             
-            // --- LAYER 2: Active Regions Mask (NOAA) ---
-//            baseMaterial.multiply.contents = sunspotMask
-//            baseMaterial.multiply.intensity = 0.85
+            // LAYER 2: NOAA Sunspot Mask on Ambient
+            baseMaterial.ambient.contents = sunspotMask
             
-            // --- SHADER: Multi-Band Atmosphere Composite (Always Runs) ---
+            // LAYER 3: Coronal Holes (AIA 193) via Custom Uniform
+            if let live193Texture = try? await sdoService.fetchLatestImage(wavelength: .aia193, resolution: 4096, cachedIfExists: cachedIfExists) {
+                let textureProperty193 = SCNMaterialProperty(contents: live193Texture)
+                baseMaterial.setValue(textureProperty193, forKey: "u_texture193")
+            }
+            
+            // --- SHADER: Multi-Band Atmosphere Composite ---
             let multiBandSolarShader = """
-                    #pragma transparent
-                    #pragma body
-                    
-                    // 1. Read the NASA texture data from the diffuse channel
-                    float4 surfaceColor = _surface.diffuse;
-                    float4 uvBandSample = _surface.transparent;
-                    float uvIntensity = dot(uvBandSample.rgb, float3(0.299, 0.587, 0.114));
-                    
-                    float3 N = normalize(_surface.normal);
-                    float3 V = normalize(_surface.view);
-                    float edgeFactor = 1.0 - max(0.0, dot(N, V));
-                    
-                    float atmosphericHaze = pow(edgeFactor, 6.0);
-                    float3 atmosphereColor = float3(0.98, 0.90, 0.75); 
-                    float finalAtmosphereOpacity = atmosphericHaze * (0.2 + uvIntensity * 0.8);
-                    
-                    // 2. Calculate the final surface color
-                    float3 finalColor = mix(surfaceColor.rgb, atmosphereColor, finalAtmosphereOpacity * 0.35);
-                    
-                    // 3. PBR COMPLIANCE: Route directly to emission and multiply for HDR bloom
-                    // Tweak this multiplier (1.0 to 1.5) to control how hot the surface runs
-                    float emissionBoost = 6.0; 
-                    _surface.emission = float4(finalColor * emissionBoost, 1.0);
-                    
-                    // 4. Black out the physical diffuse channel so the star acts strictly as an emitter
-                    _surface.diffuse = float4(0.0, 0.0, 0.0, 1.0);
-                    """
+                #pragma arguments
+                texture2d<float, access::sample> u_texture193;
+                
+                #pragma transparent
+                #pragma body
+                
+                constexpr sampler texSampler(coord::normalized, address::clamp_to_edge, filter::linear);
+                float2 uv = _surface.diffuseTexcoord;
+                
+                // 1. Read the data streams
+                float4 color171 = _surface.diffuse;
+                float4 color193 = u_texture193.sample(texSampler, uv);
+                float sunspotActivity = _surface.ambient.r;
+                
+                // 2. THE COMPOSITE MATH
+                // Base: 193 Angstroms (Coronal Holes)
+                float3 compositeColor = color193.rgb;
+                
+                // Additive: 171 Angstroms (Active Plasma)
+                // Multiplied slightly so it doesn't completely blow out the base
+                compositeColor += (color171.rgb * 0.85);
+                
+                // Subtractive: NOAA Mask (Dark Sunspots)
+                // Punch dark holes into the bright active regions
+                compositeColor -= (sunspotActivity * 0.8);
+                
+                // Ensure math doesn't drop below absolute zero
+                compositeColor = max(compositeColor, float3(0.0));
+                
+                // 3. Atmospheric Edge Haze
+                float4 uvBandSample = _surface.transparent;
+                float uvIntensity = dot(uvBandSample.rgb, float3(0.299, 0.587, 0.114));
+                
+                float3 N = normalize(_surface.normal);
+                float3 V = normalize(_surface.view);
+                float edgeFactor = 1.0 - max(0.0, dot(N, V));
+                
+                float atmosphericHaze = pow(edgeFactor, 6.0);
+                float3 atmosphereColor = float3(0.98, 0.90, 0.75); 
+                float finalAtmosphereOpacity = atmosphericHaze * (0.2 + uvIntensity * 0.8);
+                
+                // 4. Final Blend
+                float3 finalColor = mix(compositeColor, atmosphereColor, finalAtmosphereOpacity * 0.35);
+                
+                // 5. PBR COMPLIANCE: Route directly to emission and multiply for HDR bloom
+                float emissionBoost = 6.0; 
+                _surface.emission = float4(finalColor * emissionBoost, 1.0);
+                
+                // 6. Black out the physical diffuse channel
+                _surface.diffuse = float4(0.0, 0.0, 0.0, 1.0);
+                """
             
             // Apply the surface shader by default
             baseMaterial.shaderModifiers = [.surface: multiBandSolarShader]
             
-            // --- LAYER 3: Topological Warp (Only runs if we have a valid Texture) ---
+            // --- LAYER 4: Topological Warp ---
             if let validImage = topologicalImage {
                 baseMaterial.transparent.contents = validImage
                 baseMaterial.setValue(baseMaterial.transparent, forKey: "u_activeRegionMap")
                 baseMaterial.setValue(Float(0.05), forKey: "u_warpIntensity")
                 
                 let unifiedGeometryShader = """
-                        #pragma arguments
-                        float u_warpIntensity;
-                        texture2d<float, access::sample> u_activeRegionMap;
-                        
-                        #pragma body
-                        
-                        float flowTime = scn_frame.time * 0.15;
-                        
-                        float warpX = (sin(_geometry.texcoords[0].y * 12.0 + flowTime) 
-                                     + sin(_geometry.texcoords[0].y * 28.0 - flowTime * 1.5)) * 0.003;
-                                                                                                            
-                        float warpY = (cos(_geometry.texcoords[0].x * 14.0 - flowTime) 
-                                     + cos(_geometry.texcoords[0].x * 24.0 + flowTime * 1.2)) * 0.003;
-                        
-                        _geometry.texcoords[0].x += warpX;
-                        _geometry.texcoords[0].y += warpY;
-                        
-                        constexpr sampler texSampler(coord::normalized, address::clamp_to_edge, filter::linear);
-                        
-                        float2 uv = _geometry.texcoords[0];
-                        float4 mapData = u_activeRegionMap.sample(texSampler, uv);
-                        float activityLevel = mapData.r; 
-                        
-                        float3 currentPos = _geometry.position.xyz;
-                        float3 surfaceNormal = _geometry.normal;
-                        float baseRadius = max(length(currentPos), 0.001f);
-                        
-                        float sinLat = currentPos.y / baseRadius;
-                        float cosLat = sqrt(max(0.0f, 1.0f - (sinLat * sinLat)));
-                        float oblateness = cosLat * 0.015f; 
-                        
-                        float magneticBulge = (activityLevel - 0.1f) * u_warpIntensity;
-                        float totalDisplacement = (oblateness + magneticBulge) * baseRadius;
-                        
-                        _geometry.position.xyz = currentPos + (surfaceNormal * totalDisplacement);
-                        """
+                    #pragma arguments
+                    float u_warpIntensity;
+                    texture2d<float, access::sample> u_activeRegionMap;
+                    
+                    #pragma body
+                    
+                    float flowTime = scn_frame.time * 0.15;
+                    
+                    float warpX = (sin(_geometry.texcoords[0].y * 12.0 + flowTime) 
+                                 + sin(_geometry.texcoords[0].y * 28.0 - flowTime * 1.5)) * 0.003;
+                                                                                                        
+                    float warpY = (cos(_geometry.texcoords[0].x * 14.0 - flowTime) 
+                                 + cos(_geometry.texcoords[0].x * 24.0 + flowTime * 1.2)) * 0.003;
+                    
+                    _geometry.texcoords[0].x += warpX;
+                    _geometry.texcoords[0].y += warpY;
+                    
+                    constexpr sampler texSampler(coord::normalized, address::clamp_to_edge, filter::linear);
+                    
+                    float2 uv = _geometry.texcoords[0];
+                    float4 mapData = u_activeRegionMap.sample(texSampler, uv);
+                    float activityLevel = mapData.r; 
+                    
+                    float3 currentPos = _geometry.position.xyz;
+                    float3 surfaceNormal = _geometry.normal;
+                    float baseRadius = max(length(currentPos), 0.001f);
+                    
+                    float sinLat = currentPos.y / baseRadius;
+                    float cosLat = sqrt(max(0.0f, 1.0f - (sinLat * sinLat)));
+                    float oblateness = cosLat * 0.015f; 
+                    
+                    float magneticBulge = (activityLevel - 0.1f) * u_warpIntensity;
+                    float totalDisplacement = (oblateness + magneticBulge) * baseRadius;
+                    
+                    _geometry.position.xyz = currentPos + (surfaceNormal * totalDisplacement);
+                    """
                 
                 // 🚨 SAFEGUARD: Only append the geometry shader if the texture successfully loaded
                 baseMaterial.shaderModifiers?[.geometry] = unifiedGeometryShader
@@ -174,7 +202,7 @@ extension SwiftDKNI {
                 print("Warning: Topological image failed to load. Falling back to perfect sphere geometry.")
             }
         }
-
+    
     /// Fetches, generates, and time-aligns all CME events into a single container node.
     /// - Parameters:
     ///   - sphere: The central SCNSphere whose radius dictates the starting boundary.
