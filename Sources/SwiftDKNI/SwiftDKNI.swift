@@ -150,53 +150,56 @@ extension SwiftDKNI {
             baseMaterial.shaderModifiers = [.surface: multiBandSolarShader]
             
             // --- LAYER 4: Topological Warp ---
-            if let validImage = topologicalImage {
-                baseMaterial.transparent.contents = validImage
-                baseMaterial.setValue(baseMaterial.transparent, forKey: "u_activeRegionMap")
-                baseMaterial.setValue(Float(0.05), forKey: "u_warpIntensity")
-                
-                let unifiedGeometryShader = """
-                    #pragma arguments
-                    float u_warpIntensity;
-                    texture2d<float, access::sample> u_activeRegionMap;
-                    
-                    #pragma body
-                    
-                    float flowTime = scn_frame.time * 0.15;
-                    
-                    float warpX = (sin(_geometry.texcoords[0].y * 12.0 + flowTime) 
-                                 + sin(_geometry.texcoords[0].y * 28.0 - flowTime * 1.5)) * 0.003;
-                                                                                                        
-                    float warpY = (cos(_geometry.texcoords[0].x * 14.0 - flowTime) 
-                                 + cos(_geometry.texcoords[0].x * 24.0 + flowTime * 1.2)) * 0.003;
-                    
-                    _geometry.texcoords[0].x += warpX;
-                    _geometry.texcoords[0].y += warpY;
-                    
-                    constexpr sampler texSampler(coord::normalized, address::clamp_to_edge, filter::linear);
-                    
-                    float2 uv = _geometry.texcoords[0];
-                    float4 mapData = u_activeRegionMap.sample(texSampler, uv);
-                    float activityLevel = mapData.r; 
-                    
-                    float3 currentPos = _geometry.position.xyz;
-                    float3 surfaceNormal = _geometry.normal;
-                    float baseRadius = max(length(currentPos), 0.001f);
-                    
-                    float sinLat = currentPos.y / baseRadius;
-                    float cosLat = sqrt(max(0.0f, 1.0f - (sinLat * sinLat)));
-                    float oblateness = cosLat * 0.015f; 
-                    
-                    float magneticBulge = (activityLevel - 0.1f) * u_warpIntensity;
-                    float totalDisplacement = (oblateness + magneticBulge) * baseRadius;
-                    
-                    _geometry.position.xyz = currentPos + (surfaceNormal * totalDisplacement);
-                    """
-                
-                // 🚨 SAFEGUARD: Only append the geometry shader if the texture successfully loaded
-                baseMaterial.shaderModifiers?[.geometry] = unifiedGeometryShader
-                
-            } else {
+                    if let validImage = topologicalImage {
+                        // 1. FIX: Create a standalone property. Do NOT assign it to baseMaterial.transparent
+                        let topoProperty = SCNMaterialProperty(contents: validImage)
+                        baseMaterial.setValue(topoProperty, forKey: "u_activeRegionMap")
+                        
+                        // 2. FIX: Crank the intensity up 10x for debugging (0.5 instead of 0.05)
+                        // This will make the active regions aggressively bulge out of the sphere
+                        baseMaterial.setValue(Float(0.5), forKey: "u_warpIntensity")
+                        
+                        let unifiedGeometryShader = """
+                            #pragma arguments
+                            float u_warpIntensity;
+                            texture2d<float, access::sample> u_activeRegionMap;
+                            
+                            #pragma body
+                            
+                            float flowTime = scn_frame.time * 0.15;
+                            
+                            float warpX = (sin(_geometry.texcoords[0].y * 12.0 + flowTime) 
+                                         + sin(_geometry.texcoords[0].y * 28.0 - flowTime * 1.5)) * 0.003;
+                                                                                                                
+                            float warpY = (cos(_geometry.texcoords[0].x * 14.0 - flowTime) 
+                                         + cos(_geometry.texcoords[0].x * 24.0 + flowTime * 1.2)) * 0.003;
+                            
+                            _geometry.texcoords[0].x += warpX;
+                            _geometry.texcoords[0].y += warpY;
+                            
+                            constexpr sampler texSampler(coord::normalized, address::clamp_to_edge, filter::linear);
+                            
+                            float2 uv = _geometry.texcoords[0];
+                            float4 mapData = u_activeRegionMap.sample(texSampler, uv);
+                            float activityLevel = mapData.r; 
+                            
+                            float3 currentPos = _geometry.position.xyz;
+                            float3 surfaceNormal = _geometry.normal;
+                            float baseRadius = max(length(currentPos), 0.001f);
+                            
+                            float sinLat = currentPos.y / baseRadius;
+                            float cosLat = sqrt(max(0.0f, 1.0f - (sinLat * sinLat)));
+                            float oblateness = cosLat * 0.015f; 
+                            
+                            float magneticBulge = (activityLevel - 0.1f) * u_warpIntensity;
+                            float totalDisplacement = (oblateness + magneticBulge) * baseRadius;
+                            
+                            _geometry.position.xyz = currentPos + (surfaceNormal * totalDisplacement);
+                            """
+                        
+                        baseMaterial.shaderModifiers?[.geometry] = unifiedGeometryShader
+                        
+                    } else {
                 // Fallback to plain white color, NO geometry shader added to prevent crash
     #if os(macOS)
                 baseMaterial.transparent.contents = NSColor.white
