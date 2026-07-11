@@ -233,7 +233,7 @@ extension CMEGeometryBuilder {
                 let edgeColor = SCNVector3(0.4, 0.02, 0.0)
                 material.setValue(NSValue(scnVector3: edgeColor), forKey: "u_edgeColor")
 
-                var hdrMultiplier: Float = 3.5
+                var hdrMultiplier: Float = 0.8
                 material.setValue(Data(bytes: &hdrMultiplier, count: MemoryLayout<Float>.size), forKey: "u_hdrMultiplier")
             } catch {
                 print("CRITICAL: Failed to load shader files: \(error)")
