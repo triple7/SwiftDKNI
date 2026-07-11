@@ -105,20 +105,24 @@ extension SwiftDKNI {
                 float sunspotActivity = _surface.ambient.r;
                 
                 // 2. THE COMPOSITE MATH
-                // Base: 193 Angstroms (Coronal Holes)
+                // Base: 193 Angstroms (Preserves the dark coronal holes)
                 float3 compositeColor = color193.rgb;
                 
-                // Additive: 171 Angstroms (Active Plasma)
-                // Multiplied slightly so it doesn't completely blow out the base
-                compositeColor += (color171.rgb * 0.85);
+                // Isolate 171: Calculate how bright the 171 pixel is
+                float luma171 = dot(color171.rgb, float3(0.299, 0.587, 0.114));
                 
-                // Subtractive: NOAA Mask (Dark Sunspots)
-                // Punch dark holes into the bright active regions
-                compositeColor -= (sunspotActivity * 0.8);
+                // Mask 171: Only add 171 where it is intensely bright (the active loops)
+                // This prevents the 171 background from filling in the 193 coronal holes
+                float3 hotPlasma171 = color171.rgb * smoothstep(0.4, 0.8, luma171);
+                compositeColor += hotPlasma171;
+                
+                // Multiplicative Sunspots: Punch true dark holes into the composite
+                // If sunspotActivity is 1.0, we multiply the color by 0.05 (near black)
+                compositeColor *= (1.0 - (sunspotActivity * 0.95));
                 
                 // Ensure math doesn't drop below absolute zero
-                compositeColor = max(compositeColor, float3(0.0));
-                
+                compositeColor = max(compositeColor, float3(0.0));                
+
                 // 3. Atmospheric Edge Haze
                 float4 uvBandSample = _surface.transparent;
                 float uvIntensity = dot(uvBandSample.rgb, float3(0.299, 0.587, 0.114));
