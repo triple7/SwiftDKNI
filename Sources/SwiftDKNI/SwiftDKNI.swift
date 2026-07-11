@@ -81,8 +81,8 @@ extension SwiftDKNI {
             }
             
             // --- LAYER 2: Active Regions Mask (NOAA) ---
-            baseMaterial.multiply.contents = sunspotMask
-            baseMaterial.multiply.intensity = 0.85
+//            baseMaterial.multiply.contents = sunspotMask
+//            baseMaterial.multiply.intensity = 0.85
             
             // --- SHADER: Multi-Band Atmosphere Composite (Always Runs) ---
             let multiBandSolarShader = """
@@ -107,7 +107,7 @@ extension SwiftDKNI {
                     
                     // 3. PBR COMPLIANCE: Route directly to emission and multiply for HDR bloom
                     // Tweak this multiplier (1.0 to 1.5) to control how hot the surface runs
-                    float emissionBoost = 1.2; 
+                    float emissionBoost = 6.0; 
                     _surface.emission = float4(finalColor * emissionBoost, 1.0);
                     
                     // 4. Black out the physical diffuse channel so the star acts strictly as an emitter
