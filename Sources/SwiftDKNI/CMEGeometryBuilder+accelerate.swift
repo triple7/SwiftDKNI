@@ -218,7 +218,7 @@ extension CMEGeometryBuilder {
                 material.setValue(Data(bytes: &defaultVariance, count: MemoryLayout<Float>.size), forKey: "u_particleVariance")
                 
                 // Fragment Shader Uniforms
-                var defaultWarp: Float = 0.027
+                var defaultWarp: Float = 0.05
                 material.setValue(Data(bytes: &defaultWarp, count: MemoryLayout<Float>.size), forKey: "u_warpIntensity")
                 var defaultBoil: Float = 2.0
                 material.setValue(Data(bytes: &defaultBoil, count: MemoryLayout<Float>.size), forKey: "u_boilSpeed")
