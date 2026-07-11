@@ -43,114 +43,138 @@ extension SwiftDKNI {
     
     
     private func applySolarSurfaceMaterials(
-        to sphere: SCNSphere,
-        topologicalImage: Any?, // Accept the pre-fetched image directly
-        cachedIfExists: Bool = true
-    ) async throws {
-        // 1. Fetch the active regions
-        let noaaService = NOAADataService()
-        let activeRegions = try await noaaService.fetchActiveRegions(cachedIfExists: cachedIfExists)
-        
-        // 2. Generate the surface layers
-        guard let sunspotMask = generateSunspotTexture(from: activeRegions, textureSize: CGSize(width: 4096, height: 2048)),
-              let baseMaterial = sphere.materials.first else {
-            return
-        }
-        
-        sphere.segmentCount = 400
-        baseMaterial.lightingModel = .constant
-        let sdoService = NASASDOService()
-        
-        // --- LAYER 1: Core Surface Plasma (AIA 171) ---
-        if let liveSunTexture = try? await sdoService.fetchLatestImage(wavelength: .aia171, resolution: 4096, cachedIfExists: cachedIfExists) {
-            baseMaterial.diffuse.contents = liveSunTexture
-        }
-        
-        // --- LAYER 2: Active Regions Mask (NOAA) ---
-        baseMaterial.multiply.contents = sunspotMask
-        baseMaterial.multiply.intensity = 0.85
-        
-        // --- SHADER: Multi-Band Atmosphere Composite (Always Runs) ---
-        let multiBandSolarShader = """
-                #pragma transparent
-                #pragma body
-                
-                float4 surfaceColor = _surface.diffuse;
-                float4 uvBandSample = _surface.transparent;
-                float uvIntensity = dot(uvBandSample.rgb, float3(0.299, 0.587, 0.114));
-                
-                float3 N = normalize(_surface.normal);
-                float3 V = normalize(_surface.view);
-                float edgeFactor = 1.0 - max(0.0, dot(N, V));
-                
-                float atmosphericHaze = pow(edgeFactor, 6.0);
-                float3 atmosphereColor = float3(0.98, 0.90, 0.75); 
-                float finalAtmosphereOpacity = atmosphericHaze * (0.2 + uvIntensity * 0.8);
-                
-                _surface.diffuse.rgb = mix(surfaceColor.rgb, atmosphereColor, finalAtmosphereOpacity * 0.35);
-                _surface.diffuse.rgb += _surface.emission.rgb;
-                """
-        
-        // Apply the surface shader by default
-        baseMaterial.shaderModifiers = [.surface: multiBandSolarShader]
-        
-        // --- LAYER 3: Topological Warp (Only runs if we have a valid Texture) ---
-        if let validImage = topologicalImage {
-            baseMaterial.transparent.contents = validImage
-            baseMaterial.setValue(baseMaterial.transparent, forKey: "u_activeRegionMap")
-            baseMaterial.setValue(Float(0.05), forKey: "u_warpIntensity")
+            to sphere: SCNSphere,
+            topologicalImage: Any?, // Accept the pre-fetched image directly
+            cachedIfExists: Bool = true
+        ) async throws {
+            // 1. Fetch the active regions
+            let noaaService = NOAADataService()
+            let activeRegions = try await noaaService.fetchActiveRegions(cachedIfExists: cachedIfExists)
             
-            let unifiedGeometryShader = """
-                    #pragma arguments
-                    float u_warpIntensity;
-                    texture2d<float, access::sample> u_activeRegionMap;
-                    
+            // 2. Generate the surface layers
+            guard let sunspotMask = generateSunspotTexture(from: activeRegions, textureSize: CGSize(width: 4096, height: 2048)),
+                  let baseMaterial = sphere.materials.first else {
+                return
+            }
+            
+            sphere.segmentCount = 400
+            
+            // --- PBR UPGRADE: Shift from .constant to .physicallyBased ---
+            baseMaterial.lightingModel = .physicallyBased
+            
+            // Force SceneKit to allocate the emission channel in the Metal struct
+            // and kill specular highlights so it doesn't reflect ambient scene light
+    #if os(macOS)
+            baseMaterial.emission.contents = NSColor.black
+            baseMaterial.specular.contents = NSColor.black
+    #else
+            baseMaterial.emission.contents = UIColor.black
+            baseMaterial.specular.contents = UIColor.black
+    #endif
+
+            let sdoService = NASASDOService()
+            
+            // --- LAYER 1: Core Surface Plasma (AIA 171) ---
+            // We keep the texture in the diffuse channel purely as a data carrier for the shader to read
+            if let liveSunTexture = try? await sdoService.fetchLatestImage(wavelength: .aia171, resolution: 4096, cachedIfExists: cachedIfExists) {
+                baseMaterial.diffuse.contents = liveSunTexture
+            }
+            
+            // --- LAYER 2: Active Regions Mask (NOAA) ---
+            baseMaterial.multiply.contents = sunspotMask
+            baseMaterial.multiply.intensity = 0.85
+            
+            // --- SHADER: Multi-Band Atmosphere Composite (Always Runs) ---
+            let multiBandSolarShader = """
+                    #pragma transparent
                     #pragma body
                     
-                    float flowTime = scn_frame.time * 0.15;
+                    // 1. Read the NASA texture data from the diffuse channel
+                    float4 surfaceColor = _surface.diffuse;
+                    float4 uvBandSample = _surface.transparent;
+                    float uvIntensity = dot(uvBandSample.rgb, float3(0.299, 0.587, 0.114));
                     
-                    float warpX = (sin(_geometry.texcoords[0].y * 12.0 + flowTime) 
-                                 + sin(_geometry.texcoords[0].y * 28.0 - flowTime * 1.5)) * 0.003;
-                                                                                   
-                    float warpY = (cos(_geometry.texcoords[0].x * 14.0 - flowTime) 
-                                 + cos(_geometry.texcoords[0].x * 24.0 + flowTime * 1.2)) * 0.003;
+                    float3 N = normalize(_surface.normal);
+                    float3 V = normalize(_surface.view);
+                    float edgeFactor = 1.0 - max(0.0, dot(N, V));
                     
-                    _geometry.texcoords[0].x += warpX;
-                    _geometry.texcoords[0].y += warpY;
+                    float atmosphericHaze = pow(edgeFactor, 6.0);
+                    float3 atmosphereColor = float3(0.98, 0.90, 0.75); 
+                    float finalAtmosphereOpacity = atmosphericHaze * (0.2 + uvIntensity * 0.8);
                     
-                    constexpr sampler texSampler(coord::normalized, address::clamp_to_edge, filter::linear);
+                    // 2. Calculate the final surface color
+                    float3 finalColor = mix(surfaceColor.rgb, atmosphereColor, finalAtmosphereOpacity * 0.35);
                     
-                    float2 uv = _geometry.texcoords[0];
-                    float4 mapData = u_activeRegionMap.sample(texSampler, uv);
-                    float activityLevel = mapData.r; 
+                    // 3. PBR COMPLIANCE: Route directly to emission and multiply for HDR bloom
+                    // Tweak this multiplier (1.0 to 1.5) to control how hot the surface runs
+                    float emissionBoost = 1.2; 
+                    _surface.emission = float4(finalColor * emissionBoost, 1.0);
                     
-                    float3 currentPos = _geometry.position.xyz;
-                    float3 surfaceNormal = _geometry.normal;
-                    float baseRadius = max(length(currentPos), 0.001f);
-                    
-                    float sinLat = currentPos.y / baseRadius;
-                    float cosLat = sqrt(max(0.0f, 1.0f - (sinLat * sinLat)));
-                    float oblateness = cosLat * 0.015f; 
-                    
-                    float magneticBulge = (activityLevel - 0.1f) * u_warpIntensity;
-                    float totalDisplacement = (oblateness + magneticBulge) * baseRadius;
-                    
-                    _geometry.position.xyz = currentPos + (surfaceNormal * totalDisplacement);
+                    // 4. Black out the physical diffuse channel so the star acts strictly as an emitter
+                    _surface.diffuse = float4(0.0, 0.0, 0.0, 1.0);
                     """
             
-            // 🚨 SAFEGUARD: Only append the geometry shader if the texture successfully loaded
-            baseMaterial.shaderModifiers?[.geometry] = unifiedGeometryShader
+            // Apply the surface shader by default
+            baseMaterial.shaderModifiers = [.surface: multiBandSolarShader]
             
-        } else {
-            // Fallback to plain white color, NO geometry shader added to prevent crash
-#if os(macOS)
-            baseMaterial.transparent.contents = NSColor.white
-#else
-            baseMaterial.transparent.contents = UIColor.white
-#endif
-            print("Warning: Topological image failed to load. Falling back to perfect sphere geometry.")
+            // --- LAYER 3: Topological Warp (Only runs if we have a valid Texture) ---
+            if let validImage = topologicalImage {
+                baseMaterial.transparent.contents = validImage
+                baseMaterial.setValue(baseMaterial.transparent, forKey: "u_activeRegionMap")
+                baseMaterial.setValue(Float(0.05), forKey: "u_warpIntensity")
+                
+                let unifiedGeometryShader = """
+                        #pragma arguments
+                        float u_warpIntensity;
+                        texture2d<float, access::sample> u_activeRegionMap;
+                        
+                        #pragma body
+                        
+                        float flowTime = scn_frame.time * 0.15;
+                        
+                        float warpX = (sin(_geometry.texcoords[0].y * 12.0 + flowTime) 
+                                     + sin(_geometry.texcoords[0].y * 28.0 - flowTime * 1.5)) * 0.003;
+                                                                                                            
+                        float warpY = (cos(_geometry.texcoords[0].x * 14.0 - flowTime) 
+                                     + cos(_geometry.texcoords[0].x * 24.0 + flowTime * 1.2)) * 0.003;
+                        
+                        _geometry.texcoords[0].x += warpX;
+                        _geometry.texcoords[0].y += warpY;
+                        
+                        constexpr sampler texSampler(coord::normalized, address::clamp_to_edge, filter::linear);
+                        
+                        float2 uv = _geometry.texcoords[0];
+                        float4 mapData = u_activeRegionMap.sample(texSampler, uv);
+                        float activityLevel = mapData.r; 
+                        
+                        float3 currentPos = _geometry.position.xyz;
+                        float3 surfaceNormal = _geometry.normal;
+                        float baseRadius = max(length(currentPos), 0.001f);
+                        
+                        float sinLat = currentPos.y / baseRadius;
+                        float cosLat = sqrt(max(0.0f, 1.0f - (sinLat * sinLat)));
+                        float oblateness = cosLat * 0.015f; 
+                        
+                        float magneticBulge = (activityLevel - 0.1f) * u_warpIntensity;
+                        float totalDisplacement = (oblateness + magneticBulge) * baseRadius;
+                        
+                        _geometry.position.xyz = currentPos + (surfaceNormal * totalDisplacement);
+                        """
+                
+                // 🚨 SAFEGUARD: Only append the geometry shader if the texture successfully loaded
+                baseMaterial.shaderModifiers?[.geometry] = unifiedGeometryShader
+                
+            } else {
+                // Fallback to plain white color, NO geometry shader added to prevent crash
+    #if os(macOS)
+                baseMaterial.transparent.contents = NSColor.white
+    #else
+                baseMaterial.transparent.contents = UIColor.white
+    #endif
+                print("Warning: Topological image failed to load. Falling back to perfect sphere geometry.")
+            }
         }
-    }
+
     /// Fetches, generates, and time-aligns all CME events into a single container node.
     /// - Parameters:
     ///   - sphere: The central SCNSphere whose radius dictates the starting boundary.
