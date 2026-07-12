@@ -208,53 +208,48 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         }
 
     public func createCoronalEjectionNode(
-                for event: AveragedCMEData,
-                openLines: [MagneticLoopLine],
-                pointCount: Int,
-                solarRadius: Float = 1.0
-            ) throws -> SCNNode {
-                
-                let geometry = self.buildDONKICorrelatedCMECloud(
-                    eventLatitude: Float(event.latitude ?? 0.0),
-                    eventLongitude: Float(event.longitude ?? 0.0),
-                    eventHalfAngle: Float(event.halfAngle ?? 45.0),
-                    eventSpeed: Float(event.speed),
-                    openLines: openLines,
-                    pointCount: pointCount,
-                    solarRadius: solarRadius
-                )
-                
-                let bound = CGFloat(solarRadius * 10.0)
-                geometry.boundingBox = (min: SCNVector3(-bound, -bound, -bound), max: SCNVector3(bound, bound, bound))
-                
-                let material = SCNMaterial()
-                
-                material.lightingModel = .physicallyBased
-                material.blendMode = .add
-                material.readsFromDepthBuffer = true
-                material.writesToDepthBuffer = false
-                material.isDoubleSided = true
-                
-                material.transparencyMode = .aOne
-                material.transparency = 0.999
+            for event: AveragedCMEData,
+            openLines: [MagneticLoopLine],
+            pointCount: Int,
+            solarRadius: Float = 1.0
+        ) throws -> SCNNode {
+            
+            let geometry = self.buildDONKICorrelatedCMECloud(
+                eventLatitude: Float(event.latitude ?? 0.0),
+                eventLongitude: Float(event.longitude ?? 0.0),
+                eventHalfAngle: Float(event.halfAngle ?? 45.0),
+                eventSpeed: Float(event.speed),
+                openLines: openLines,
+                pointCount: pointCount,
+                solarRadius: solarRadius
+            )
+            
+            let bound = CGFloat(solarRadius * 10.0)
+            geometry.boundingBox = (min: SCNVector3(-bound, -bound, -bound), max: SCNVector3(bound, bound, bound))
+            
+            let material = SCNMaterial()
+            
+            material.lightingModel = .physicallyBased
+            material.blendMode = .add
+            material.readsFromDepthBuffer = true
+            material.writesToDepthBuffer = false
+            material.isDoubleSided = true
+            
+            // 🚨 FIX 1: Map the dummy texture across all physical channels.
+            // This stops Apple's HSR from deleting the transparent pixels.
+            let dummyTex = createDummyTexture()
+            material.diffuse.contents = dummyTex
+            material.ambient.contents = dummyTex
+            material.specular.contents = dummyTex
+            material.transparent.contents = dummyTex
+            material.emission.contents = dummyTex
 
-                let dummyTex = createDummyTexture()
-                material.diffuse.contents = dummyTex
-                
-                #if os(macOS)
-                material.emission.contents = NSColor.white // Prevents CPU culling
-                material.specular.contents = NSColor.black
-                #else
-                material.emission.contents = UIColor.white
-                material.specular.contents = UIColor.black
-                #endif
-                
-                material.emission.mappingChannel = 0
-
-                let fileManager = FileManager.default
-                let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
-                let geometryShaderURL = documentsURL.appendingPathComponent("stars/coronal_geometry.metal")
-                let fragmentShaderURL = documentsURL.appendingPathComponent("stars/coronal_fragment.metal")
+            let fileManager = FileManager.default
+            let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            let geometryShaderURL = documentsURL.appendingPathComponent("stars/coronal_geometry.metal")
+            let fragmentShaderURL = documentsURL.appendingPathComponent("stars/coronal_fragment.metal")
+            
+            do {
                 let geometrySource = try String(contentsOf: geometryShaderURL, encoding: .utf8)
                 let fragmentSource = try String(contentsOf: fragmentShaderURL, encoding: .utf8)
                 
@@ -262,14 +257,21 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
                     .geometry: geometrySource,
                     .surface: fragmentSource
                 ]
-                
-                geometry.materials = [material]
-                
-                let node = SCNNode(geometry: geometry)
-                node.categoryBitMask = 2
-                
-                return node
+            } catch {
+                print("CRITICAL: Failed to load CME shader files: \(error)")
+                material.shaderModifiers = [:]
             }
+            
+            geometry.materials = [material]
+            
+            let node = SCNNode(geometry: geometry)
+            node.categoryBitMask = 2
+            
+            // 🚨 FIX 2: Defer rendering to the transparent pass, matching the tunnels.
+            node.renderingOrder = 10
+            
+            return node
+        }
 
     public func createCoronalSurface(from lines: [MagneticLoopLine], solarRadius: Float) -> SCNNode {
         let masterNode = SCNNode()

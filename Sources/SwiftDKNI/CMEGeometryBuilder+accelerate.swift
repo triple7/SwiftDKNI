@@ -44,7 +44,6 @@ extension CMEGeometryBuilder {
         return result
     }
     
-    
     public func buildAcceleratedEnergyTunnels(from lines: [MagneticLoopLine], particlesPerUnitLength: Float = 50.0, solarRadius: Float) -> SCNNode {
             
             let validLines = lines.filter { !$0.isOpen }
