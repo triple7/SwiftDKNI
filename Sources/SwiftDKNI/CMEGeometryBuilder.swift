@@ -47,104 +47,111 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
     }
     
     public func buildDONKICorrelatedCMECloud(
-            eventLatitude: Float,
-            eventLongitude: Float,
-            eventHalfAngle: Float,
-            eventSpeed: Float,
-            openLines: [MagneticLoopLine],
-            pointCount: Int = 15000,
-            solarRadius: Float = 1.0
-        ) -> SCNGeometry {
-            
-            guard !openLines.isEmpty else {
-                print("No open magnetic lines")
-                return SCNGeometry()
-            }
-            
-            let donkiCenter = simd_normalize(sphericalToCartesian(lat: eventLatitude, lon: eventLongitude))
-            
-            // 1. Generate randoms for 3D positioning
-            let noiseX = generateAcceleratedRandoms(count: pointCount, min: -1.0, max: 1.0)
-            let noiseY = generateAcceleratedRandoms(count: pointCount, min: -1.0, max: 1.0)
-            let noiseZ = generateAcceleratedRandoms(count: pointCount, min: -1.0, max: 1.0)
-            let spreads = generateAcceleratedRandoms(count: pointCount, min: 0.0, max: 1.0)
-            
-            // 2. Allocate ONLY what the GPU needs (Vertices and Quad UVs)
-            let totalVertices = pointCount * 4
-            var vertexDataArray = [Float](repeating: 0.0, count: totalVertices * 3)
-            var uv0DataArray    = [Float](repeating: 0.0, count: totalVertices * 2)
-            var indices         = [UInt32](repeating: 0, count: pointCount * 6)
-            
-            let quadUVs: [simd_float2] = [
-                simd_float2(0, 0), simd_float2(1, 0),
-                simd_float2(0, 1), simd_float2(1, 1)
-            ]
-            
-            // Base spawn location is exactly on the sun's surface at the DONKI coordinates
-            let rootOrigin = donkiCenter * solarRadius
-            let baseSpread = solarRadius * 0.08 // 8% spread to create a nice initial blast volume
-            
-            for i in 0..<pointCount {
+                eventLatitude: Float,
+                eventLongitude: Float,
+                eventHalfAngle: Float,
+                eventSpeed: Float,
+                openLines: [MagneticLoopLine],
+                pointCount: Int = 15000,
+                solarRadius: Float = 1.0
+            ) -> SCNGeometry {
                 
-                // Create a randomized starting position within a volumetric sphere at the root
-                let nX = noiseX[i]
-                let nY = noiseY[i]
-                let nZ = noiseZ[i]
-                
-                // Safely normalize the random noise vector
-                let rawNoise = simd_float3(nX, nY, nZ)
-                let noiseVec = length(rawNoise) > 0.001 ? simd_normalize(rawNoise) : simd_float3(0, 1, 0)
-                
-                let finalPos = rootOrigin + (noiseVec * spreads[i] * baseSpread)
-
-                // 🚨 CRITICAL FIX: The "NaN" Preventer
-                // We give the quad a tiny physical size (0.001).
-                // It is mathematically > 0, so SceneKit doesn't crash, and the
-                // Metal Geometry Shader will override this and scale it up anyway.
-                let tiny: Float = 0.001
-                let safeOffsets: [simd_float3] = [
-                    simd_float3(-tiny, -tiny, 0),
-                    simd_float3(tiny, -tiny, 0),
-                    simd_float3(-tiny,  tiny, 0),
-                    simd_float3(tiny,  tiny, 0)
-                ]
-
-                // Build the Quad
-                for j in 0..<4 {
-                    let vIdx = (i * 4) + j
-                    let v3 = vIdx * 3
-                    
-                    vertexDataArray[v3] = finalPos.x + safeOffsets[j].x
-                    vertexDataArray[v3 + 1] = finalPos.y + safeOffsets[j].y
-                    vertexDataArray[v3 + 2] = finalPos.z + safeOffsets[j].z
-                    
-                    let v2 = vIdx * 2
-                    uv0DataArray[v2] = quadUVs[j].x
-                    uv0DataArray[v2 + 1] = quadUVs[j].y
+                guard !openLines.isEmpty else {
+                    print("No open magnetic lines")
+                    return SCNGeometry()
                 }
                 
-                let iIdx = i * 6
-                let baseV = UInt32(i * 4)
-                indices[iIdx] = baseV
-                indices[iIdx + 1] = baseV + 1
-                indices[iIdx + 2] = baseV + 2
-                indices[iIdx + 3] = baseV + 1
-                indices[iIdx + 4] = baseV + 3
-                indices[iIdx + 5] = baseV + 2
+                let donkiCenter = simd_normalize(sphericalToCartesian(lat: eventLatitude, lon: eventLongitude))
+                
+                // 1. Generate randoms for 3D positioning
+                let noiseX = generateAcceleratedRandoms(count: pointCount, min: -1.0, max: 1.0)
+                let noiseY = generateAcceleratedRandoms(count: pointCount, min: -1.0, max: 1.0)
+                let noiseZ = generateAcceleratedRandoms(count: pointCount, min: -1.0, max: 1.0)
+                let spreads = generateAcceleratedRandoms(count: pointCount, min: 0.0, max: 1.0)
+                
+                // 2. Allocate what the GPU needs (Vertices, UVs, AND Normals to satisfy PBR)
+                let totalVertices = pointCount * 4
+                var vertexDataArray = [Float](repeating: 0.0, count: totalVertices * 3)
+                var normalDataArray = [Float](repeating: 0.0, count: totalVertices * 3) // Added normal array
+                var uv0DataArray    = [Float](repeating: 0.0, count: totalVertices * 2)
+                var indices         = [UInt32](repeating: 0, count: pointCount * 6)
+                
+                let quadUVs: [simd_float2] = [
+                    simd_float2(0, 0), simd_float2(1, 0),
+                    simd_float2(0, 1), simd_float2(1, 1)
+                ]
+                
+                // Base spawn location is exactly on the sun's surface at the DONKI coordinates
+                let rootOrigin = donkiCenter * solarRadius
+                let baseSpread = solarRadius * 0.08 // 8% spread to create a nice initial blast volume
+                
+                for i in 0..<pointCount {
+                    
+                    // Create a randomized starting position within a volumetric sphere at the root
+                    let nX = noiseX[i]
+                    let nY = noiseY[i]
+                    let nZ = noiseZ[i]
+                    
+                    // Safely normalize the random noise vector
+                    let rawNoise = simd_float3(nX, nY, nZ)
+                    let noiseVec = length(rawNoise) > 0.001 ? simd_normalize(rawNoise) : simd_float3(0, 1, 0)
+                    
+                    let finalPos = rootOrigin + (noiseVec * spreads[i] * baseSpread)
+
+                    // The "NaN" Preventer
+                    let tiny: Float = 0.001
+                    let safeOffsets: [simd_float3] = [
+                        simd_float3(-tiny, -tiny, 0),
+                        simd_float3(tiny, -tiny, 0),
+                        simd_float3(-tiny,  tiny, 0),
+                        simd_float3(tiny,  tiny, 0)
+                    ]
+
+                    // Build the Quad
+                    for j in 0..<4 {
+                        let vIdx = (i * 4) + j
+                        let v3 = vIdx * 3
+                        
+                        vertexDataArray[v3] = finalPos.x + safeOffsets[j].x
+                        vertexDataArray[v3 + 1] = finalPos.y + safeOffsets[j].y
+                        vertexDataArray[v3 + 2] = finalPos.z + safeOffsets[j].z
+                        
+                        // Assign dummy normals so SceneKit doesn't delete the geometry
+                        normalDataArray[v3] = 0.0
+                        normalDataArray[v3 + 1] = 0.0
+                        normalDataArray[v3 + 2] = 1.0
+                        
+                        let v2 = vIdx * 2
+                        uv0DataArray[v2] = quadUVs[j].x
+                        uv0DataArray[v2 + 1] = quadUVs[j].y
+                    }
+                    
+                    let iIdx = i * 6
+                    let baseV = UInt32(i * 4)
+                    indices[iIdx] = baseV
+                    indices[iIdx + 1] = baseV + 1
+                    indices[iIdx + 2] = baseV + 2
+                    indices[iIdx + 3] = baseV + 1
+                    indices[iIdx + 4] = baseV + 3
+                    indices[iIdx + 5] = baseV + 2
+                }
+                
+                // 3. Construct the lightweight geometry
+                let vertexData = Data(bytes: vertexDataArray, count: vertexDataArray.count * MemoryLayout<Float>.size)
+                let source = SCNGeometrySource(data: vertexData, semantic: .vertex, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
+                
+                let normalData = Data(bytes: normalDataArray, count: normalDataArray.count * MemoryLayout<Float>.size)
+                let normalSource = SCNGeometrySource(data: normalData, semantic: .normal, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
+                
+                let uv0Data = Data(bytes: uv0DataArray, count: uv0DataArray.count * MemoryLayout<Float>.size)
+                let uvSource = SCNGeometrySource(data: uv0Data, semantic: .texcoord, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
+                
+                let indexData = Data(bytes: indices, count: indices.count * MemoryLayout<UInt32>.size)
+                let element = SCNGeometryElement(data: indexData, primitiveType: .triangles, primitiveCount: pointCount * 2, bytesPerIndex: MemoryLayout<UInt32>.size)
+                
+                // Return with the normalSource included
+                return SCNGeometry(sources: [source, normalSource, uvSource], elements: [element])
             }
-            
-            // 3. Construct the lightweight geometry
-            let vertexData = Data(bytes: vertexDataArray, count: vertexDataArray.count * MemoryLayout<Float>.size)
-            let source = SCNGeometrySource(data: vertexData, semantic: .vertex, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
-            
-            let uv0Data = Data(bytes: uv0DataArray, count: uv0DataArray.count * MemoryLayout<Float>.size)
-            let uvSource = SCNGeometrySource(data: uv0Data, semantic: .texcoord, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
-            
-            let indexData = Data(bytes: indices, count: indices.count * MemoryLayout<UInt32>.size)
-            let element = SCNGeometryElement(data: indexData, primitiveType: .triangles, primitiveCount: pointCount * 2, bytesPerIndex: MemoryLayout<UInt32>.size)
-            
-            return SCNGeometry(sources: [source, uvSource], elements: [element])
-        }
 
     public func buildDataDrivenMagneticLoops(from lines: [MagneticLoopLine], pointsPerUnitLength: Float = 35.0, solarRadius: Float) -> SCNGeometry {
             var vertices: [simd_float3] = []
@@ -201,92 +208,65 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         }
 
     public func createCoronalEjectionNode(
-            for event: AveragedCMEData,
-            openLines: [MagneticLoopLine],
-            pointCount: Int,
-            solarRadius: Float = 1.0
-        ) throws -> SCNNode {
-            
-            let geometry = self.buildDONKICorrelatedCMECloud(
-                eventLatitude: Float(event.latitude ?? 0.0),
-                eventLongitude: Float(event.longitude ?? 0.0),
-                eventHalfAngle: Float(event.halfAngle ?? 45.0),
-                eventSpeed: Float(event.speed),
-                openLines: openLines,
-                pointCount: pointCount,
-                solarRadius: solarRadius
-            )
-            
-            // Prevent the CPU from aggressively culling the geometry based on camera angles
-            let bound = CGFloat(solarRadius * 10.0)
-            geometry.boundingBox = (min: SCNVector3(-bound, -bound, -bound), max: SCNVector3(bound, bound, bound))
-            
-            let material = SCNMaterial()
-            
-            material.lightingModel = .physicallyBased
-            material.blendMode = .add
-            material.readsFromDepthBuffer = true
-            material.writesToDepthBuffer = false
-            material.isDoubleSided = true
-            
-            let dummyTex = createDummyTexture()
-            material.diffuse.contents = dummyTex // Keep this here to lock the UV buffer open
-            
-            // 🚨 THE CPU CULLING FIX:
-            // We MUST force the base emission to white. If it's black or empty, SceneKit's
-            // CPU optimizer deletes the .add node before the GPU Metal shader can paint it.
-            #if os(macOS)
-            material.emission.contents = NSColor.white
-            material.specular.contents = NSColor.black
-            #else
-            material.emission.contents = UIColor.white
-            material.specular.contents = UIColor.black
-            #endif
-            
-            let fileManager = FileManager.default
-            let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            let geometryShaderURL = documentsURL.appendingPathComponent("stars/coronal_geometry.metal")
-            let fragmentShaderURL = documentsURL.appendingPathComponent("stars/coronal_fragment.metal")
-            let geometrySource = try String(contentsOf: geometryShaderURL, encoding: .utf8)
-            let fragmentSource = try String(contentsOf: fragmentShaderURL, encoding: .utf8)
-            
-            // Define the GPU argument buffers
-            material.shaderModifiers = [
-                .geometry: geometrySource,
-                .surface: fragmentSource
-            ]
-            
-            // Attach the material to compile the buffers
-            geometry.materials = [material]
-            
-            guard let finalMaterial = geometry.firstMaterial else {
-                return SCNNode(geometry: geometry)
+                for event: AveragedCMEData,
+                openLines: [MagneticLoopLine],
+                pointCount: Int,
+                solarRadius: Float = 1.0
+            ) throws -> SCNNode {
+                
+                let geometry = self.buildDONKICorrelatedCMECloud(
+                    eventLatitude: Float(event.latitude ?? 0.0),
+                    eventLongitude: Float(event.longitude ?? 0.0),
+                    eventHalfAngle: Float(event.halfAngle ?? 45.0),
+                    eventSpeed: Float(event.speed),
+                    openLines: openLines,
+                    pointCount: pointCount,
+                    solarRadius: solarRadius
+                )
+                
+                let bound = CGFloat(solarRadius * 10.0)
+                geometry.boundingBox = (min: SCNVector3(-bound, -bound, -bound), max: SCNVector3(bound, bound, bound))
+                
+                let material = SCNMaterial()
+                
+                material.lightingModel = .physicallyBased
+                material.blendMode = .add
+                material.readsFromDepthBuffer = true
+                material.writesToDepthBuffer = false
+                material.isDoubleSided = true
+                
+                let dummyTex = createDummyTexture()
+                material.diffuse.contents = dummyTex
+                
+                #if os(macOS)
+                material.emission.contents = NSColor.white // Prevents CPU culling
+                material.specular.contents = NSColor.black
+                #else
+                material.emission.contents = UIColor.white
+                material.specular.contents = UIColor.black
+                #endif
+                
+                material.emission.mappingChannel = 0
+
+                let fileManager = FileManager.default
+                let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                let geometryShaderURL = documentsURL.appendingPathComponent("stars/coronal_geometry.metal")
+                let fragmentShaderURL = documentsURL.appendingPathComponent("stars/coronal_fragment.metal")
+                let geometrySource = try String(contentsOf: geometryShaderURL, encoding: .utf8)
+                let fragmentSource = try String(contentsOf: fragmentShaderURL, encoding: .utf8)
+                
+                material.shaderModifiers = [
+                    .geometry: geometrySource,
+                    .surface: fragmentSource
+                ]
+                
+                geometry.materials = [material]
+                
+                let node = SCNNode(geometry: geometry)
+                node.categoryBitMask = 2
+                
+                return node
             }
-            
-            // 🚨 THE BULLETPROOF KVC FIX:
-            // Explicitly wrapping these in NSNumber guarantees SceneKit's KVC dictionary
-            // doesn't drop the Swift Floats before the Metal pipeline state is finalized.
-            finalMaterial.setValue(NSNumber(value: Float(0.3)), forKey: "u_thickness")
-            
-            // Hardcoded to 5.0 to guarantee they expand at spawn. Once you see them on screen,
-            // you can rewire this to 0.0 and let your UI timeline slider update it!
-            finalMaterial.setValue(NSNumber(value: Float(5.0)), forKey: "u_globalTime")
-            finalMaterial.setValue(NSNumber(value: Float(0.0)), forKey: "u_ignitionTime")
-            
-            let visualSpeedScale: Float = 0.0004
-            let scaledSpeed = Float(event.speed) * visualSpeedScale
-            finalMaterial.setValue(NSNumber(value: scaledSpeed), forKey: "u_speed")
-            
-            finalMaterial.setValue(NSNumber(value: Float(solarRadius)), forKey: "u_solarRadius")
-            
-            let halfAngleRad = Float(event.halfAngle ?? 45.0) * .pi / 180.0
-            finalMaterial.setValue(NSNumber(value: halfAngleRad), forKey: "u_halfAngle")
-            
-            let node = SCNNode(geometry: geometry)
-            node.categoryBitMask = 2
-            
-            return node
-        }
 
     public func createCoronalSurface(from lines: [MagneticLoopLine], solarRadius: Float) -> SCNNode {
         let masterNode = SCNNode()
