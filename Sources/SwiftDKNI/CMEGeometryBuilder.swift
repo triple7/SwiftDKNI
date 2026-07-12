@@ -217,35 +217,32 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
                 solarRadius: solarRadius
             )
             
-            // Prevent the CPU from aggressively culling the geometry
+            // Prevent the CPU from aggressively culling the geometry based on camera angles
             let bound = CGFloat(solarRadius * 10.0)
             geometry.boundingBox = (min: SCNVector3(-bound, -bound, -bound), max: SCNVector3(bound, bound, bound))
             
             let material = SCNMaterial()
             
-            // --- PBR UPGRADE ---
             material.lightingModel = .physicallyBased
             material.blendMode = .add
-            material.readsFromDepthBuffer = true  // CRITICAL: So CMEs hide behind the sun
-            material.writesToDepthBuffer = false  // Keep false so additive plasma particles blend
+            material.readsFromDepthBuffer = true
+            material.writesToDepthBuffer = false
             material.isDoubleSided = true
             
-            // Use the existing dummy texture to force SceneKit to pass UVs to Metal
             let dummyTex = createDummyTexture()
+            material.diffuse.contents = dummyTex // Keep this here to lock the UV buffer open
             
+            // 🚨 THE CPU CULLING FIX:
+            // We MUST force the base emission to white. If it's black or empty, SceneKit's
+            // CPU optimizer deletes the .add node before the GPU Metal shader can paint it.
             #if os(macOS)
-            material.diffuse.contents = dummyTex
+            material.emission.contents = NSColor.white
             material.specular.contents = NSColor.black
             #else
-            material.diffuse.contents = dummyTex
+            material.emission.contents = UIColor.white
             material.specular.contents = UIColor.black
             #endif
             
-            // THE UV LOCK: Assign the texture to emission so the shader can output light
-            // AND SceneKit is forced to keep _surface.diffuseTexcoord alive
-            material.emission.contents = dummyTex
-            material.emission.mappingChannel = 0
-
             let fileManager = FileManager.default
             let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
             let geometryShaderURL = documentsURL.appendingPathComponent("stars/coronal_geometry.metal")
@@ -253,45 +250,37 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             let geometrySource = try String(contentsOf: geometryShaderURL, encoding: .utf8)
             let fragmentSource = try String(contentsOf: fragmentShaderURL, encoding: .utf8)
             
-            // 🚨 CRITICAL SEQUENCE PART 1:
-            // Set the shader modifiers FIRST to define the argument buffers on the material.
+            // Define the GPU argument buffers
             material.shaderModifiers = [
                 .geometry: geometrySource,
                 .surface: fragmentSource
             ]
             
-            // 🚨 CRITICAL SEQUENCE PART 2:
-            // Assign the material to the geometry BEFORE setting KVC values.
-            // This anchors the material to a geometry graph, forcing SceneKit to finalize
-            // the GPU argument buffers so .setValue actually works.
+            // Attach the material to compile the buffers
             geometry.materials = [material]
             
-            // Now use geometry.firstMaterial to guarantee we are writing to the attached buffer
             guard let finalMaterial = geometry.firstMaterial else {
                 return SCNNode(geometry: geometry)
             }
             
-            // Set the baseline values. Cast explicitly to Float to match Metal alignment.
-            let thickness: Float = 0.3
-            finalMaterial.setValue(thickness, forKey: "u_thickness")
+            // 🚨 THE BULLETPROOF KVC FIX:
+            // Explicitly wrapping these in NSNumber guarantees SceneKit's KVC dictionary
+            // doesn't drop the Swift Floats before the Metal pipeline state is finalized.
+            finalMaterial.setValue(NSNumber(value: Float(0.3)), forKey: "u_thickness")
             
-            // 🚨 THE CRITICAL INITIALIZATION FIX:
-            // Setting this to 5.0 so they render on spawn. If this is 0.0, the shader will
-            // intentionally collapse the particles, making them invisible until scrubbed by UI.
-            let initialGlobalTime: Float = 5.0
-            finalMaterial.setValue(initialGlobalTime, forKey: "u_globalTime")
-            
-            let ignitionTime: Float = 0.0
-            finalMaterial.setValue(ignitionTime, forKey: "u_ignitionTime")
+            // Hardcoded to 5.0 to guarantee they expand at spawn. Once you see them on screen,
+            // you can rewire this to 0.0 and let your UI timeline slider update it!
+            finalMaterial.setValue(NSNumber(value: Float(5.0)), forKey: "u_globalTime")
+            finalMaterial.setValue(NSNumber(value: Float(0.0)), forKey: "u_ignitionTime")
             
             let visualSpeedScale: Float = 0.0004
             let scaledSpeed = Float(event.speed) * visualSpeedScale
-            finalMaterial.setValue(scaledSpeed, forKey: "u_speed")
+            finalMaterial.setValue(NSNumber(value: scaledSpeed), forKey: "u_speed")
             
-            finalMaterial.setValue(Float(solarRadius), forKey: "u_solarRadius")
+            finalMaterial.setValue(NSNumber(value: Float(solarRadius)), forKey: "u_solarRadius")
             
             let halfAngleRad = Float(event.halfAngle ?? 45.0) * .pi / 180.0
-            finalMaterial.setValue(halfAngleRad, forKey: "u_halfAngle")
+            finalMaterial.setValue(NSNumber(value: halfAngleRad), forKey: "u_halfAngle")
             
             let node = SCNNode(geometry: geometry)
             node.categoryBitMask = 2
