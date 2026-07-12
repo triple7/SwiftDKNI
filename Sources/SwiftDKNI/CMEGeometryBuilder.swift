@@ -56,7 +56,10 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             solarRadius: Float = 1.0
         ) -> SCNGeometry {
             
-            guard !openLines.isEmpty else { return SCNGeometry() }
+            guard !openLines.isEmpty else {
+                print("No open magnetic lines")
+                return SCNGeometry()
+            }
             
             let donkiCenter = simd_normalize(sphericalToCartesian(lat: eventLatitude, lon: eventLongitude))
             
@@ -231,7 +234,7 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         let dummyTex = createDummyTexture()
         
         #if os(macOS)
-        material.diffuse.contents = NSColor.black
+        material.diffuse.contents = dummyTex
         material.specular.contents = NSColor.black
         #else
         material.diffuse.contents = UIColor.black
