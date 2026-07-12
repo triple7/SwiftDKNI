@@ -76,8 +76,8 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             var indices         = [UInt32](repeating: 0, count: pointCount * 6)
             
             let quadUVs: [simd_float2] = [
-                simd_float2(-1, -1), simd_float2(1, -1),
-                simd_float2(-1,  1), simd_float2(1,  1)
+                simd_float2(0, 0), simd_float2(1, 0),
+                simd_float2(0, 1), simd_float2(1, 1)
             ]
             
             // Base spawn location is exactly on the sun's surface at the DONKI coordinates
