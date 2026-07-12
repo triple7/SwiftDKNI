@@ -59,31 +59,8 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             guard !openLines.isEmpty else { return SCNGeometry() }
             
             let donkiCenter = simd_normalize(sphericalToCartesian(lat: eventLatitude, lon: eventLongitude))
-            let halfAngleRad = eventHalfAngle * .pi / 180.0
-            
-            var matchedLines: [MagneticLoopLine] = []
-            for line in openLines {
-                let rootPos = simd_normalize(line.p0)
-                let dotProduct = simd_dot(donkiCenter, rootPos)
-                let angle = acos(max(-1.0, min(1.0, dotProduct)))
-                
-                if angle <= halfAngleRad {
-                    matchedLines.append(line)
-                }
-            }
-            
-            if matchedLines.isEmpty {
-                let sortedLines = openLines.sorted { a, b in
-                    let dotA = simd_dot(donkiCenter, simd_normalize(a.p0))
-                    let dotB = simd_dot(donkiCenter, simd_normalize(b.p0))
-                    return dotA > dotB
-                }
-                matchedLines = Array(sortedLines.prefix(3))
-            }
             
             // 1. Generate randoms for 3D positioning
-//            let tValues = generateAcceleratedRandoms(count: pointCount, min: 0.0, max: 1.0)
-            let tValues = generateLinearArray(count: pointCount, min: 0.0, max: 1.0)
             let noiseX = generateAcceleratedRandoms(count: pointCount, min: -1.0, max: 1.0)
             let noiseY = generateAcceleratedRandoms(count: pointCount, min: -1.0, max: 1.0)
             let noiseZ = generateAcceleratedRandoms(count: pointCount, min: -1.0, max: 1.0)
@@ -99,62 +76,44 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
                 simd_float2(-1, -1), simd_float2(1, -1),
                 simd_float2(-1,  1), simd_float2(1,  1)
             ]
-            var currentPos = donkiCenter // I've added this, effectively the thing should start at the center, traverse outwards at it's velocity below, then get pulled by the magnetic fields
-            let ejectionSpeed = eventSpeed
             
-            let dt: Float = 1.0/Float(pointCount)
-            let speedFactor: Float = 0.003
+            // Base spawn location is exactly on the sun's surface at the DONKI coordinates
+            let rootOrigin = donkiCenter * solarRadius
+            let baseSpread = solarRadius * 0.08 // 8% spread to create a nice initial blast volume
             
             for i in 0..<pointCount {
-                let line = matchedLines.randomElement()!
-                let t = tValues[i]
                 
+                // Create a randomized starting position within a volumetric sphere at the root
+                let nX = noiseX[i]
+                let nY = noiseY[i]
+                let nZ = noiseZ[i]
                 
-                let centerPos = line.position(at: t) * solarRadius // This will be the position of the magnetic field. Can use this as a vector direction for which way the CME will be pulled
+                // Safely normalize the random noise vector
+                let rawNoise = simd_float3(nX, nY, nZ)
+                let noiseVec = length(rawNoise) > 0.001 ? simd_normalize(rawNoise) : simd_float3(0, 1, 0)
                 
-                let magneticPull = simd_normalize(centerPos - currentPos)
-                let radialVector = simd_normalize(currentPos)
-                
-                // 4. Combine Forces
-                // Influence strength (magneticPullFactor): 0.0 = pure radial blast, 1.0 = glued to field line
-                let magneticPullFactor: Float = 5.0 - (t * 4.99) // Field influence increases as it moves out
-                let magneticPullFactorVector = simd_float3(magneticPullFactor, magneticPullFactor, magneticPullFactor)
-                let combinedVector = simd_normalize(simd_mix(radialVector, magneticPull, magneticPullFactorVector))
-                
-                let displacement = combinedVector * (ejectionSpeed * speedFactor * dt)
-                currentPos += displacement
-                
-                // Update the final position for this index
-                let finalPos = currentPos
-//                let voidFactor = pow(t, 2.5)
-//                let entropySpread = (solarRadius * 0.03) + (voidFactor * solarRadius * 2.5)
-//                
-////                let noiseVec = Xsimd_normalize(simd_float3(noiseX[i], noiseY[i], noiseZ[i]))
-//                let noiseVec = simd_float3(0,0,0)
-//                let finalPos = centerPos + (noiseVec * (spreads[i] * entropySpread))
+                let finalPos = rootOrigin + (noiseVec * spreads[i] * baseSpread)
 
-                // ADDED: A temporary physical size for debugging (e.g., 2% of the solar radius)
-                let debugSize: Float = solarRadius * 0.02
-                let debugOffsets: [simd_float3] = [
-                    simd_float3(-debugSize, -debugSize, 0), // Bottom Left
-                    simd_float3(debugSize, -debugSize, 0),  // Bottom Right
-                    simd_float3(-debugSize,  debugSize, 0), // Top Left
-                    simd_float3(debugSize,  debugSize, 0)   // Top Right
+                // 🚨 CRITICAL FIX: The "NaN" Preventer
+                // We give the quad a tiny physical size (0.001).
+                // It is mathematically > 0, so SceneKit doesn't crash, and the
+                // Metal Geometry Shader will override this and scale it up anyway.
+                let tiny: Float = 0.001
+                let safeOffsets: [simd_float3] = [
+                    simd_float3(-tiny, -tiny, 0),
+                    simd_float3(tiny, -tiny, 0),
+                    simd_float3(-tiny,  tiny, 0),
+                    simd_float3(tiny,  tiny, 0)
                 ]
 
                 // Build the Quad
                 for j in 0..<4 {
                     let vIdx = (i * 4) + j
                     let v3 = vIdx * 3
-                    // Debug mode with the quads being shown:
-//                    vertexDataArray[v3] = finalPos.x + debugOffsets[j].x
-//                    vertexDataArray[v3 + 1] = finalPos.y + debugOffsets[j].y
-//                    vertexDataArray[v3 + 2] = finalPos.z + debugOffsets[j].z
                     
-                    // ADDED: Apply the debug offset to expand the point into a square
-                    vertexDataArray[v3] = finalPos.x
-                    vertexDataArray[v3 + 1] = finalPos.y
-                    vertexDataArray[v3 + 2] = finalPos.z
+                    vertexDataArray[v3] = finalPos.x + safeOffsets[j].x
+                    vertexDataArray[v3 + 1] = finalPos.y + safeOffsets[j].y
+                    vertexDataArray[v3 + 2] = finalPos.z + safeOffsets[j].z
                     
                     let v2 = vIdx * 2
                     uv0DataArray[v2] = quadUVs[j].x
