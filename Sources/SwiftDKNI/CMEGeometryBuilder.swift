@@ -267,7 +267,7 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         let ignitionTime: Float = 0.0
         material.setValue(ignitionTime, forKey: "u_ignitionTime")
         
-        let visualSpeedScale: Float = 0.001
+        let visualSpeedScale: Float = 0.0001
         let scaledSpeed = Float(event.speed) * visualSpeedScale
         material.setValue(scaledSpeed, forKey: "u_speed")
         
