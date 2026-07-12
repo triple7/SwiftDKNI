@@ -453,7 +453,14 @@ extension SwiftDKNI {
                         
                         material.setValue(NSNumber(value: sRadius), forKey: "u_solarRadius")
                         material.setValue(NSNumber(value: Float(2.0)), forKey: "u_thickness")
-                        material.setValue(NSNumber(value: Float(event.speed) ?? Float(500.0)), forKey: "u_speed")
+
+                        
+                        // Scale the raw km/s into SceneKit units so they don't instantly fly off-screen
+                        let rawSpeed = Float(event.speed) ?? Float(500.0)
+                        let visualSpeedScale: Float = 0.0004
+                        let scaledSpeed = rawSpeed * visualSpeedScale
+
+                        material.setValue(NSNumber(value: scaledSpeed), forKey: "u_speed")
                         material.setValue(NSNumber(value: Float(event.halfAngle) ?? Float(20.0)), forKey: "u_halfAngle")
                         
                         if let vp = sharedVolumeProperty {
