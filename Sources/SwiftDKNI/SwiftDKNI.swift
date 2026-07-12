@@ -438,7 +438,7 @@ extension SwiftDKNI {
                         openLines: openMagneticLines,
                         pointCount: 1000,
                         solarRadius: Float(sphere.radius))
-                    cmeNode.categoryBitMask = 4
+                    cmeNode.categoryBitMask = 2
                     if let material = cmeNode.geometry?.materials.first {
                         material.setValue(NSNumber(value: Float(0.0)), forKey: "u_ignitionTime") // DIAGNOSTIC OVERRIDE
                         
