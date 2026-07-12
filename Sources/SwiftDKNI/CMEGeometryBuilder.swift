@@ -235,6 +235,9 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
                 material.writesToDepthBuffer = false
                 material.isDoubleSided = true
                 
+                material.transparencyMode = .aOne
+                material.transparency = 0.999
+
                 let dummyTex = createDummyTexture()
                 material.diffuse.contents = dummyTex
                 
