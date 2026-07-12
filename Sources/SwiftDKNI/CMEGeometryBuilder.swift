@@ -235,18 +235,16 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             material.writesToDepthBuffer = false
             material.isDoubleSided = true
             
-            let dummyTex = createDummyTexture()
-            let transDummyTex = createTransparentDummyTexture()
+            // 🚨 Explicitly tell SceneKit this is a high-quality transparent PBR material
+            material.transparencyMode = .dualLayer
+            material.transparency = 0.999
             
+            let dummyTex = createDummyTexture()
             material.diffuse.contents = dummyTex
             material.ambient.contents = dummyTex
             material.specular.contents = dummyTex
+            material.transparent.contents = dummyTex
             material.emission.contents = dummyTex
-            
-            // 🚨 THE FIX: This explicit 50% alpha texture forces SceneKit to
-            // disable hardware HSR, drop the node into the Transparent Queue,
-            // and finally respect your .add blend mode without crashing the shader.
-            material.transparent.contents = transDummyTex
 
             let fileManager = FileManager.default
             let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -271,12 +269,11 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             let node = SCNNode(geometry: geometry)
             node.categoryBitMask = 2
             
-            // Defers rendering until the sun has been safely drawn
+            // Push to the end of the render queue so the sun draws first
             node.renderingOrder = 10
             
             return node
         }
-
     public func createCoronalSurface(from lines: [MagneticLoopLine], solarRadius: Float) -> SCNNode {
         let masterNode = SCNNode()
         
