@@ -439,6 +439,12 @@ extension SwiftDKNI {
                         pointCount: 1000,
                         solarRadius: Float(sphere.radius))
                     cmeNode.categoryBitMask = 2
+
+                    //  ANTI-CULL OVERRIDE: Force a massive bounding box so SceneKit never deletes it
+                    cmeNode.geometry?.boundingBox = (
+                        min: SCNVector3(-50.0, -50.0, -50.0),
+                        max: SCNVector3(50.0, 50.0, 50.0)
+                    )
                     if let material = cmeNode.geometry?.materials.first {
                         material.setValue(NSNumber(value: Float(0.0)), forKey: "u_ignitionTime") // DIAGNOSTIC OVERRIDE
                         
