@@ -47,112 +47,113 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
     }
     
     public func buildDONKICorrelatedCMECloud(
-        eventLatitude: Float,
-        eventLongitude: Float,
-        eventHalfAngle: Float,
-        eventSpeed: Float,
-        openLines: [MagneticLoopLine],
-        pointCount: Int = 15000,
-        solarRadius: Float = 1.0
-    ) -> SCNGeometry {
-        
-        guard !openLines.isEmpty else {
-            print("No open magnetic lines")
-            return SCNGeometry()
-        }
-        
-        let donkiCenter = simd_normalize(sphericalToCartesian(lat: eventLatitude, lon: eventLongitude))
-        
-        // 1. Generate randoms for 3D positioning
-        let noiseX = generateAcceleratedRandoms(count: pointCount, min: -1.0, max: 1.0)
-        let noiseY = generateAcceleratedRandoms(count: pointCount, min: -1.0, max: 1.0)
-        let noiseZ = generateAcceleratedRandoms(count: pointCount, min: -1.0, max: 1.0)
-        let spreads = generateAcceleratedRandoms(count: pointCount, min: 0.0, max: 1.0)
-        
-        // 2. Allocate what the GPU needs (Vertices, UVs, AND Normals to satisfy PBR)
-        let totalVertices = pointCount * 4
-        var vertexDataArray = [Float](repeating: 0.0, count: totalVertices * 3)
-        var normalDataArray = [Float](repeating: 0.0, count: totalVertices * 3) // Added normal array
-        var uv0DataArray    = [Float](repeating: 0.0, count: totalVertices * 2)
-        var indices         = [UInt32](repeating: 0, count: pointCount * 6)
-        
-        let quadUVs: [simd_float2] = [
-            simd_float2(0, 0), simd_float2(1, 0),
-            simd_float2(0, 1), simd_float2(1, 1)
-        ]
-        
-        // Base spawn location is exactly on the sun's surface at the DONKI coordinates
-        let rootOrigin = donkiCenter * solarRadius
-        let baseSpread = solarRadius * 0.08 // 8% spread to create a nice initial blast volume
-        
-        for i in 0..<pointCount {
+            eventLatitude: Float,
+            eventLongitude: Float,
+            eventHalfAngle: Float,
+            eventSpeed: Float,
+            openLines: [MagneticLoopLine],
+            pointCount: Int = 15000,
+            solarRadius: Float = 1.0
+        ) -> SCNGeometry {
             
-            // Create a randomized starting position within a volumetric sphere at the root
-            let nX = noiseX[i]
-            let nY = noiseY[i]
-            let nZ = noiseZ[i]
-            
-            // Safely normalize the random noise vector
-            let rawNoise = simd_float3(nX, nY, nZ)
-            let noiseVec = length(rawNoise) > 0.001 ? simd_normalize(rawNoise) : simd_float3(0, 1, 0)
-            
-            let finalPos = rootOrigin + (noiseVec * spreads[i] * baseSpread)
-            
-            // The "NaN" Preventer
-            let tiny: Float = 0.001
-            let safeOffsets: [simd_float3] = [
-                simd_float3(-tiny, -tiny, 0),
-                simd_float3(tiny, -tiny, 0),
-                simd_float3(-tiny,  tiny, 0),
-                simd_float3(tiny,  tiny, 0)
-            ]
-            
-            // Build the Quad
-            for j in 0..<4 {
-                let vIdx = (i * 4) + j
-                let v3 = vIdx * 3
-                
-                vertexDataArray[v3] = finalPos.x + safeOffsets[j].x
-                vertexDataArray[v3 + 1] = finalPos.y + safeOffsets[j].y
-                vertexDataArray[v3 + 2] = finalPos.z + safeOffsets[j].z
-                
-                // Assign dummy normals so SceneKit doesn't delete the geometry
-                normalDataArray[v3] = 0.0
-                normalDataArray[v3 + 1] = 0.0
-                normalDataArray[v3 + 2] = 1.0
-                
-                let v2 = vIdx * 2
-                uv0DataArray[v2] = quadUVs[j].x
-                uv0DataArray[v2 + 1] = quadUVs[j].y
+            guard !openLines.isEmpty else {
+                print("No open magnetic lines")
+                return SCNGeometry()
             }
             
-            let iIdx = i * 6
-            let baseV = UInt32(i * 4)
-            indices[iIdx] = baseV
-            indices[iIdx + 1] = baseV + 1
-            indices[iIdx + 2] = baseV + 2
-            indices[iIdx + 3] = baseV + 1
-            indices[iIdx + 4] = baseV + 3
-            indices[iIdx + 5] = baseV + 2
+            let donkiCenter = simd_normalize(sphericalToCartesian(lat: eventLatitude, lon: eventLongitude))
+            
+            let noiseX = generateAcceleratedRandoms(count: pointCount, min: -1.0, max: 1.0)
+            let noiseY = generateAcceleratedRandoms(count: pointCount, min: -1.0, max: 1.0)
+            let noiseZ = generateAcceleratedRandoms(count: pointCount, min: -1.0, max: 1.0)
+            let spreads = generateAcceleratedRandoms(count: pointCount, min: 0.0, max: 1.0)
+            
+            let totalVertices = pointCount * 4
+            var vertexDataArray = [Float](repeating: 0.0, count: totalVertices * 3)
+            var normalDataArray = [Float](repeating: 0.0, count: totalVertices * 3)
+            var uv0DataArray    = [Float](repeating: 0.0, count: totalVertices * 2)
+            
+            // 🚨 NEW: The missing color semantic array that forces SceneKit into the transparent pipeline
+            var colorDataArray  = [Float](repeating: 1.0, count: totalVertices * 4)
+            
+            var indices         = [UInt32](repeating: 0, count: pointCount * 6)
+            
+            let quadUVs: [simd_float2] = [
+                simd_float2(0, 0), simd_float2(1, 0),
+                simd_float2(0, 1), simd_float2(1, 1)
+            ]
+            
+            let rootOrigin = donkiCenter * solarRadius
+            let baseSpread = solarRadius * 0.08
+            
+            for i in 0..<pointCount {
+                let nX = noiseX[i]
+                let nY = noiseY[i]
+                let nZ = noiseZ[i]
+                
+                let rawNoise = simd_float3(nX, nY, nZ)
+                let noiseVec = length(rawNoise) > 0.001 ? simd_normalize(rawNoise) : simd_float3(0, 1, 0)
+                
+                let finalPos = rootOrigin + (noiseVec * spreads[i] * baseSpread)
+
+                let tiny: Float = 0.001
+                let safeOffsets: [simd_float3] = [
+                    simd_float3(-tiny, -tiny, 0),
+                    simd_float3(tiny, -tiny, 0),
+                    simd_float3(-tiny,  tiny, 0),
+                    simd_float3(tiny,  tiny, 0)
+                ]
+
+                for j in 0..<4 {
+                    let vIdx = (i * 4) + j
+                    let v3 = vIdx * 3
+                    
+                    vertexDataArray[v3] = finalPos.x + safeOffsets[j].x
+                    vertexDataArray[v3 + 1] = finalPos.y + safeOffsets[j].y
+                    vertexDataArray[v3 + 2] = finalPos.z + safeOffsets[j].z
+                    
+                    normalDataArray[v3] = 0.0
+                    normalDataArray[v3 + 1] = 0.0
+                    normalDataArray[v3 + 2] = 1.0
+                    
+                    let v2 = vIdx * 2
+                    uv0DataArray[v2] = quadUVs[j].x
+                    uv0DataArray[v2 + 1] = quadUVs[j].y
+                    
+                    // colorDataArray is already initialized to 1.0 (white, fully opaque alpha),
+                    // so no loop assignment is needed here.
+                }
+                
+                let iIdx = i * 6
+                let baseV = UInt32(i * 4)
+                indices[iIdx] = baseV
+                indices[iIdx + 1] = baseV + 1
+                indices[iIdx + 2] = baseV + 2
+                indices[iIdx + 3] = baseV + 1
+                indices[iIdx + 4] = baseV + 3
+                indices[iIdx + 5] = baseV + 2
+            }
+            
+            let vertexData = Data(bytes: vertexDataArray, count: vertexDataArray.count * MemoryLayout<Float>.size)
+            let source = SCNGeometrySource(data: vertexData, semantic: .vertex, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
+            
+            let normalData = Data(bytes: normalDataArray, count: normalDataArray.count * MemoryLayout<Float>.size)
+            let normalSource = SCNGeometrySource(data: normalData, semantic: .normal, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
+            
+            let uv0Data = Data(bytes: uv0DataArray, count: uv0DataArray.count * MemoryLayout<Float>.size)
+            let uvSource = SCNGeometrySource(data: uv0Data, semantic: .texcoord, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
+            
+            // 🚨 NEW: Create the color source
+            let colorData = Data(bytes: colorDataArray, count: colorDataArray.count * MemoryLayout<Float>.size)
+            let colorSource = SCNGeometrySource(data: colorData, semantic: .color, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 4, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 4)
+            
+            let indexData = Data(bytes: indices, count: indices.count * MemoryLayout<UInt32>.size)
+            let element = SCNGeometryElement(data: indexData, primitiveType: .triangles, primitiveCount: pointCount * 2, bytesPerIndex: MemoryLayout<UInt32>.size)
+            
+            // 🚨 Pass the colorSource to the final geometry
+            return SCNGeometry(sources: [source, normalSource, uvSource, colorSource], elements: [element])
         }
-        
-        // 3. Construct the lightweight geometry
-        let vertexData = Data(bytes: vertexDataArray, count: vertexDataArray.count * MemoryLayout<Float>.size)
-        let source = SCNGeometrySource(data: vertexData, semantic: .vertex, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
-        
-        let normalData = Data(bytes: normalDataArray, count: normalDataArray.count * MemoryLayout<Float>.size)
-        let normalSource = SCNGeometrySource(data: normalData, semantic: .normal, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
-        
-        let uv0Data = Data(bytes: uv0DataArray, count: uv0DataArray.count * MemoryLayout<Float>.size)
-        let uvSource = SCNGeometrySource(data: uv0Data, semantic: .texcoord, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
-        
-        let indexData = Data(bytes: indices, count: indices.count * MemoryLayout<UInt32>.size)
-        let element = SCNGeometryElement(data: indexData, primitiveType: .triangles, primitiveCount: pointCount * 2, bytesPerIndex: MemoryLayout<UInt32>.size)
-        
-        // Return with the normalSource included
-        return SCNGeometry(sources: [source, normalSource, uvSource], elements: [element])
-    }
-    
+
     public func buildDataDrivenMagneticLoops(from lines: [MagneticLoopLine], pointsPerUnitLength: Float = 35.0, solarRadius: Float) -> SCNGeometry {
         var vertices: [simd_float3] = []
         var indices: [Int32] = []
@@ -229,15 +230,12 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             
             let material = SCNMaterial()
             
+            // 🚨 Exactly mirroring the working Tunnels material structure
             material.lightingModel = .physicallyBased
             material.blendMode = .add
-            material.readsFromDepthBuffer = true
             material.writesToDepthBuffer = false
+            material.readsFromDepthBuffer = true
             material.isDoubleSided = true
-            
-            // 🚨 Explicitly tell SceneKit this is a high-quality transparent PBR material
-            material.transparencyMode = .dualLayer
-            material.transparency = 0.999
             
             let dummyTex = createDummyTexture()
             material.diffuse.contents = dummyTex
@@ -268,12 +266,11 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             
             let node = SCNNode(geometry: geometry)
             node.categoryBitMask = 2
-            
-            // Push to the end of the render queue so the sun draws first
             node.renderingOrder = 10
             
             return node
         }
+
     public func createCoronalSurface(from lines: [MagneticLoopLine], solarRadius: Float) -> SCNNode {
         let masterNode = SCNNode()
         
