@@ -239,9 +239,6 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             
             let dummyTex = createDummyTexture()
             material.diffuse.contents = dummyTex
-            material.ambient.contents = dummyTex
-            material.specular.contents = dummyTex
-            material.transparent.contents = dummyTex
             material.emission.contents = dummyTex
 
             let fileManager = FileManager.default
