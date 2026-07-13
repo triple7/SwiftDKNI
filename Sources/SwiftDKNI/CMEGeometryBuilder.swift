@@ -239,11 +239,15 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             material.diffuse.contents = dummyTex
             material.ambient.contents = dummyTex
             material.specular.contents = dummyTex
-        material.transparent.contents = dummyTex
-
         // 2. CRITICAL: Activate the emission channel with the dummy texture
         // so the shader modifier has a channel to write light data into.
         material.emission.contents = dummyTex
+
+#if os(macOS)
+material.transparent.contents = NSColor.clear
+#else
+material.transparent.contents = UIColor.clear
+#endif
 
             let fileManager = FileManager.default
             let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
