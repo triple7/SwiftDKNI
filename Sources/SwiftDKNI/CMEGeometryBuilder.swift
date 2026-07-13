@@ -73,10 +73,10 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             var normalDataArray = [Float](repeating: 0.0, count: totalVertices * 3)
             var uv0DataArray    = [Float](repeating: 0.0, count: totalVertices * 2)
             
-            // 🚨 NEW: The missing color semantic array that forces SceneKit into the transparent pipeline
+            // 🚨 CRITICAL ADDITION: The color semantic array that forces SceneKit out of the opaque queue
             var colorDataArray  = [Float](repeating: 1.0, count: totalVertices * 4)
             
-            var indices         = [UInt32](repeating: 0, count: pointCount * 6)
+            var indices = [UInt32](repeating: 0, count: pointCount * 6)
             
             let quadUVs: [simd_float2] = [
                 simd_float2(0, 0), simd_float2(1, 0),
@@ -120,8 +120,7 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
                     uv0DataArray[v2] = quadUVs[j].x
                     uv0DataArray[v2 + 1] = quadUVs[j].y
                     
-                    // colorDataArray is already initialized to 1.0 (white, fully opaque alpha),
-                    // so no loop assignment is needed here.
+                    // colorDataArray is pre-filled with 1.0, so no loop assignment is required here.
                 }
                 
                 let iIdx = i * 6
@@ -143,17 +142,16 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             let uv0Data = Data(bytes: uv0DataArray, count: uv0DataArray.count * MemoryLayout<Float>.size)
             let uvSource = SCNGeometrySource(data: uv0Data, semantic: .texcoord, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
             
-            // 🚨 NEW: Create the color source
+            // 🚨 CRITICAL ADDITION: The SCNGeometrySource mapped to the color array
             let colorData = Data(bytes: colorDataArray, count: colorDataArray.count * MemoryLayout<Float>.size)
             let colorSource = SCNGeometrySource(data: colorData, semantic: .color, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 4, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 4)
             
             let indexData = Data(bytes: indices, count: indices.count * MemoryLayout<UInt32>.size)
             let element = SCNGeometryElement(data: indexData, primitiveType: .triangles, primitiveCount: pointCount * 2, bytesPerIndex: MemoryLayout<UInt32>.size)
             
-            // 🚨 Pass the colorSource to the final geometry
+            // 🚨 CRITICAL ADDITION: Passing colorSource to the geometry initializer
             return SCNGeometry(sources: [source, normalSource, uvSource, colorSource], elements: [element])
         }
-
     public func buildDataDrivenMagneticLoops(from lines: [MagneticLoopLine], pointsPerUnitLength: Float = 35.0, solarRadius: Float) -> SCNGeometry {
         var vertices: [simd_float3] = []
         var indices: [Int32] = []
