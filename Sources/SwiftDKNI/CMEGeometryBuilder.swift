@@ -265,7 +265,7 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             geometry.materials = [material]
             
             let node = SCNNode(geometry: geometry)
-            node.categoryBitMask = 2
+            node.categoryBitMask = 4
             node.renderingOrder = 10
             
             return node
