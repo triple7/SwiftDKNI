@@ -55,7 +55,7 @@ public final class MagnetogramModeler: @unchecked Sendable {
             let savedURL = starsDirectoryURL.appendingPathComponent("latest_magnetogram.fits")
             
             // 1. Check the local cache if requested
-            if cachedIfExists && fileManager.fileExists(atPath: savedURL.path) {
+            if cachedIfExists && fileManager.fileExists(atPath: savedURL.path) { // Jake: Should also have a timeout for last loaded
                 print("MagnetogramModeler: Loaded magnetogram from cache at \(savedURL.lastPathComponent)")
                 return savedURL
             }
@@ -190,7 +190,7 @@ public final class MagnetogramModeler: @unchecked Sendable {
             
             let gridSize = 40
             let bucketsX = (data.width + gridSize - 1) / gridSize
-            let bucketsY = (data.height + gridSize - 1) / gridSize
+            let bucketsY = (data.height + gridSize - 1) / gridSize // JAKE: Not quite sure why these are plus gridSize minus one
             let totalBuckets = bucketsX * bucketsY
             
             print("1. Grid Size: \(gridSize)x\(gridSize) pixels")
@@ -238,7 +238,7 @@ public final class MagnetogramModeler: @unchecked Sendable {
                 
                 // Define Geographic Zones (Royal Zone vs Poles)
                 let isPolar = abs(trueLat) > 55.0
-                let dynamicThreshold: Float = isPolar ? 10.0 : thresholdGauss
+                let dynamicThreshold: Float = isPolar ? 10.0 : thresholdGauss // TODO: Jake, these look a little inconsistent, another one uses the thresholdGauss * 0.25 for polar, same value for default threshold, but will be strange if we pass in diff values.
                 
                 if localMaxAbsFlux > dynamicThreshold {
                     let lon = (Float(localPeakX) / Float(data.width)) * 360.0 - 180.0
@@ -268,7 +268,7 @@ public final class MagnetogramModeler: @unchecked Sendable {
                     if simd_length(twist) > 0.001 {
                         twist = simd_normalize(twist)
                     } else {
-                        twist = simd_float2(1.0, 0.0)
+                        twist = simd_float2(1.0, 0.0) // TODO: Jake, I imagine this should be 0.707 0.707 (1 standardised so it faces the center and effectively has no moment?
                     }
                     
                     bucketTwists[i] = twist
@@ -277,9 +277,9 @@ public final class MagnetogramModeler: @unchecked Sendable {
             
             var posRegions: [MagneticRegion] = []
             var negRegions: [MagneticRegion] = []
-            var regionalTwists: [String: simd_float2] = [:]
-            
-            for i in 0..<totalBuckets {
+            var regionalTwists: [String: simd_float2] = [:] // TODO: Jake why are we storing the keys here like this rather than simd_float2? Likely used to have an easy lookup for the centroidLat and centroidLon later, but wondering if we should just add the simd2float to Magnetic Region?
+            // TODO: Jake, wonder how it looks if we increase the buckets, will see where they're used later on.
+            for i in 0..<totalBuckets { // total Buckets
                 if let region = bucketResults[i], let twist = bucketTwists[i] {
                     if region.isPositive { posRegions.append(region) }
                     else { negRegions.append(region) }
@@ -320,6 +320,7 @@ public final class MagnetogramModeler: @unchecked Sendable {
 
     // MARK: - Volumetric Bucket Extraction (PFSS)
     public func exportRawBuckets(from data: MagnetogramData, thresholdGauss: Float = 20.0) -> [MagneticBucket] {
+        // TODO: Jake, a little curious about this one, it looks like it just picks the absMax and ignores a local neighbouring high value?
             print("\n=== VOLUMETRIC BUCKET EXTRACTION ===")
             let gridSize = 40
             let bucketsX = (data.width + gridSize - 1) / gridSize
@@ -415,6 +416,7 @@ public final class MagnetogramModeler: @unchecked Sendable {
     }
     
     private func traceFieldLine(startPoint p0: simd_float3, regions: [(pos: simd_float3, flux: Float)], intensity: Float, twist: simd_float2) -> MagneticLoopLine {
+        // This is the function that can use 5 spline instead of 3.
             var currentPos = p0
             var maxRadius: Float = 1.0
             var p1 = p0
@@ -533,8 +535,8 @@ public final class MagnetogramModeler: @unchecked Sendable {
             allRegions3D.append((sphericalToCartesian(lat: r.centroidLat, lon: r.centroidLon), r.fluxIntensity))
         }
         
-        let linesPerRegion = 12
-        let bundleSpreadRadius: Float = 0.06
+        let linesPerRegion = 12 // TODO: Jake, understand changing effect.
+        let bundleSpreadRadius: Float = 0.06 // TODO: Jake,understand changing effect.
         
         var concurrentLoops = [[MagneticLoopLine]](repeating: [], count: posRegions.count)
         
@@ -544,7 +546,7 @@ public final class MagnetogramModeler: @unchecked Sendable {
             
             // 2. Fetch the regional twist (helicity) for this specific anchor
             let key = "\(pos.centroidLat)_\(pos.centroidLon)"
-            let twist = regionalTwists[key] ?? simd_float2(1.0, 0.0)
+            let twist = regionalTwists[key] ?? simd_float2(1.0, 0.0) // TODO: JAKE Worth maybe changing this to shoot outwards 0.707 ?
             
             let centerPos = sphericalToCartesian(lat: pos.centroidLat, lon: pos.centroidLon)
             let up = simd_float3(0, 1, 0)

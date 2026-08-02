@@ -180,6 +180,7 @@ extension SwiftDKNI {
         
         // 2. Create the parent container
         let coronalSurfaceNode = SCNNode()
+        coronalSurfaceNode.name = "coronalSurfaceNode"
         
         // 3. Setup Date Parsers to establish t = 0 and timeline boundaries
         let queryFormatter = DateFormatter()
@@ -289,6 +290,7 @@ extension SwiftDKNI {
                 buckets: rawMagneticBuckets,
                 solarRadius: sRadius
             ).volumeData
+            // TODO: Jake I really want to look at the vector field around the sun with the magnetic lines...
             
             // STAGE 2: THE GEOMETRY DEFORMATION
             let magneticLoopStart = CACurrentMediaTime()
@@ -340,7 +342,7 @@ extension SwiftDKNI {
             coronalSurfaceNode.addChildNode(globalMagneticNode)
         }
         
-        var firstIgnitionTime: Float? = nil
+//        var firstIgnitionTime: Float? = nil // CURRENTLY UNUSED
         
         // 4. Generate and align each CME event ONLY if the flag is true
         if renderCME {
@@ -350,7 +352,7 @@ extension SwiftDKNI {
                 print("✅ Shared PFSS Volume Property mapped safely to KVC engine.")
             }
             
-            let calculatedPointsPerEvent = max(500, maxPointsPerCME / max(1, events.count))
+//            let calculatedPointsPerEvent = max(500, maxPointsPerCME / max(1, events.count))
             
             for event in events {
                 guard event.latitude != nil, event.longitude != nil else { continue }
@@ -360,13 +362,14 @@ extension SwiftDKNI {
                     print("Skipped CME: Unrecognized Date Format - \(event.startTime)")
                     continue
                 }
+                //
                 
                 let realIgnitionOffset = eventDate.timeIntervalSince(simulationStart)
                 let safeIgnitionTime = Float(realIgnitionOffset * compressionRatio)
                 
-                if firstIgnitionTime == nil || safeIgnitionTime < firstIgnitionTime! {
-                    firstIgnitionTime = safeIgnitionTime
-                }
+//                if firstIgnitionTime == nil || safeIgnitionTime < firstIgnitionTime! {// CURRENTLY UNUSED
+//                    firstIgnitionTime = safeIgnitionTime// CURRENTLY UNUSED BUG: JAKE
+//                }// CURRENTLY UNUSED
                 
                 // NOTE: The user's internal `createCoronalEjectionNode` logic calculates root positions.
                 // If CMEs are strictly generated from the surface, they may also require the `applyTopologicalWarp`
@@ -374,9 +377,9 @@ extension SwiftDKNI {
                 let cmeNode = try! renderer.createCoronalEjectionNode(
                     for: event,
                     openLines: openMagneticLines,
-                    pointCount: 1000,
+                    pointCount: 15,
                     solarRadius: Float(sphere.radius))
-                cmeNode.categoryBitMask = 4
+                cmeNode.categoryBitMask = 2
                 if let material = cmeNode.geometry?.materials.first {
                     material.setValue(NSNumber(value: Float(0.0)), forKey: "u_ignitionTime") // DIAGNOSTIC OVERRIDE
                     
@@ -385,7 +388,7 @@ extension SwiftDKNI {
                     
                     material.setValue(NSNumber(value: sRadius), forKey: "u_solarRadius")
                     material.setValue(NSNumber(value: Float(2.0)), forKey: "u_thickness")
-                    material.setValue(NSNumber(value: Float(event.speed) ?? Float(500.0)), forKey: "u_speed")
+                    material.setValue(NSNumber(value: Float(event.speed/1000.0) ?? Float(500.0)), forKey: "u_speed")
                     material.setValue(NSNumber(value: Float(event.halfAngle) ?? Float(20.0)), forKey: "u_halfAngle")
                     
                     if let vp = sharedVolumeProperty {
