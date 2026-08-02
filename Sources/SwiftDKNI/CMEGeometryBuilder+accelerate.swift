@@ -216,7 +216,7 @@ extension CMEGeometryBuilder {
                 material.setValue(NSNumber(value: solarRadius), forKey: "u_solarRadius")
                     
                 // Geometry Shader Uniforms
-                var defaultTunnelRadius: Float = 0.015
+                var defaultTunnelRadius: Float = 0.01
                 material.setValue(Data(bytes: &defaultTunnelRadius, count: MemoryLayout<Float>.size), forKey: "u_tunnelRadiusBase")
                 var defaultBaseSize: Float = 0.12
                 material.setValue(Data(bytes: &defaultBaseSize, count: MemoryLayout<Float>.size), forKey: "u_particleBaseSize")
