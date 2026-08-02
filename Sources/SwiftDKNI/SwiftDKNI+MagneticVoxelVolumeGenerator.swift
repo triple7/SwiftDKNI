@@ -75,49 +75,58 @@ extension SwiftDKNI {
     }
     
     public func applyMagneticInfluenceToSpline(
-        startPoint: simd_float3,
-        apexPoint: simd_float3,
-        endPoint: simd_float3,
-        isOpen: Bool,
-        pfssVolume: [simd_float4],
-        solarRadius: Float
-    ) -> (simd_float3, simd_float3, simd_float3) {
-        
-        var newApex = apexPoint
-        
-        // 1. Sample the ambient magnetic field at the apex
-        let ambientField = sampleMagneticVolume(
-            at: apexPoint,
-            pfssVolume: pfssVolume,
-            solarRadius: solarRadius
-        )
-        
-        let flowVector = simd_make_float3(ambientField.x, ambientField.y, ambientField.z)
-        let influence = ambientField.w // 1.0 for magnetic capture, 0.1 for void/wind
-        
-        if isOpen {
-            // OPEN SPLINES: The escape trajectory is dominated by the flow vector
-            // Shift the apex aggressively along the PFSS current
-            let escapePush = flowVector * (solarRadius * 0.5 * influence)
-            newApex += escapePush
+            p0: simd_float3,
+            p1: simd_float3,
+            p2: simd_float3,
+            p3: simd_float3,
+            p4: simd_float3,
+            isOpen: Bool,
+            pfssVolume: [simd_float4],
+            solarRadius: Float
+        ) -> (simd_float3, simd_float3, simd_float3, simd_float3, simd_float3) {
             
-        } else {
-            // CLOSED SPLINES: Flux rope braiding
-            // The apex twists perpendicularly to the ambient field to simulate magnetic tension
-            let splineDirection = normalize(endPoint - startPoint)
-            
-            // Cross product generates a perpendicular twisting force
-            let twistAxis = simd_cross(splineDirection, flowVector)
-            
-            if simd_length(twistAxis) > 0.001 {
-                let twistMagnitude = solarRadius * 0.15 * influence
-                newApex += normalize(twistAxis) * twistMagnitude
+            // A clean, localized helper to sample the field and displace a specific control point
+            func applyInfluence(to point: simd_float3, localStart: simd_float3, localEnd: simd_float3, weight: Float) -> simd_float3 {
+                let ambientField = sampleMagneticVolume(
+                    at: point,
+                    pfssVolume: pfssVolume,
+                    solarRadius: solarRadius
+                )
+                
+                let flowVector = simd_make_float3(ambientField.x, ambientField.y, ambientField.z)
+                let influence = ambientField.w // 1.0 for magnetic capture, 0.1 for void/wind
+                
+                if isOpen {
+                    // OPEN SPLINES: The escape trajectory is dominated by the flow vector
+                    let escapePush = flowVector * (solarRadius * 0.5 * influence * weight)
+                    return point + escapePush
+                    
+                } else {
+                    // CLOSED SPLINES: Flux rope braiding
+                    // The point twists perpendicularly to the ambient field based on its local trajectory
+                    let splineDirection = normalize(localEnd - localStart)
+                    let twistAxis = simd_cross(splineDirection, flowVector)
+                    
+                    if simd_length(twistAxis) > 0.001 {
+                        let twistMagnitude = solarRadius * 0.15 * influence * weight
+                        return point + (normalize(twistAxis) * twistMagnitude)
+                    }
+                }
+                return point
             }
+            
+            // 1. Ascending Quarter Point (Evaluates local tangent from p0 to p2)
+            let newP1 = applyInfluence(to: p1, localStart: p0, localEnd: p2, weight: 0.6)
+            
+            // 2. Apex Point (Evaluates overarching tangent from root to root)
+            let newP2 = applyInfluence(to: p2, localStart: p0, localEnd: p4, weight: 1.0)
+            
+            // 3. Descending Quarter Point (Evaluates local tangent from p2 to p4)
+            let newP3 = applyInfluence(to: p3, localStart: p2, localEnd: p4, weight: 0.6)
+            
+            return (p0, newP1, newP2, newP3, p4)
         }
-        
-        return (startPoint, newApex, endPoint)
-    }
-    
+
     public func generateMagneticVolumeTexture(
         device: MTLDevice,
         lines: [MagneticLoopLine],
