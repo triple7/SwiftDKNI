@@ -394,7 +394,7 @@ extension SwiftDKNI {
                     device: device,
                     lines: magneticLines,
                     solarRadius: sRadius,
-                    resolution: 128
+                    resolution: 512
                 )
                 sharedMagneticVolume = volumeResult.texture
                 
