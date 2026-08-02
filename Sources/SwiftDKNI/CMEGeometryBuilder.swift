@@ -152,6 +152,7 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             // 🚨 CRITICAL ADDITION: Passing colorSource to the geometry initializer
             return SCNGeometry(sources: [source, normalSource, uvSource, colorSource], elements: [element])
         }
+
     public func buildDataDrivenMagneticLoops(from lines: [MagneticLoopLine], pointsPerUnitLength: Float = 35.0, solarRadius: Float) -> SCNGeometry {
         var vertices: [simd_float3] = []
         var indices: [Int32] = []
@@ -311,27 +312,6 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
 #else
         UIGraphicsBeginImageContextWithOptions(size, false, 1.0)
         UIColor.black.setFill()
-        let bounds = CGRect(origin: .zero, size: size)
-        UIRectFill(bounds)
-        let image = UIGraphicsGetImageFromCurrentImageContext()!
-        UIGraphicsEndImageContext()
-        return image
-#endif
-    }
-    
-    private func createTransparentDummyTexture() -> XImage {
-        let size = CGSize(width: 4, height: 4)
-#if os(macOS)
-        let image = NSImage(size: size)
-        image.lockFocus()
-        NSColor(white: 0.0, alpha: 0.5).setFill()
-        let bounds = NSRect(origin: .zero, size: size)
-        bounds.fill()
-        image.unlockFocus()
-        return image
-#else
-        UIGraphicsBeginImageContextWithOptions(size, false, 1.0)
-        UIColor(white: 0.0, alpha: 0.5).setFill()
         let bounds = CGRect(origin: .zero, size: size)
         UIRectFill(bounds)
         let image = UIGraphicsGetImageFromCurrentImageContext()!
