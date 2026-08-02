@@ -102,17 +102,32 @@ extension SwiftDKNI {
                     return point + escapePush
                     
                 } else {
-                    // CLOSED SPLINES: Flux rope braiding
-                    // The point twists perpendicularly to the ambient field based on its local trajectory
-                    let splineDirection = normalize(localEnd - localStart)
-                    let twistAxis = simd_cross(splineDirection, flowVector)
+                    // CLOSED SPLINES: Regional Vector Conformation + Flux Rope Braiding
                     
+                    // 1. Regional Conformation: Push directly along the volume's 3D flow vector.
+                    // This guarantees the spline physically warps to match the regional field.
+                    let regionalPush = flowVector * (solarRadius * 0.25 * influence * weight)
+                    
+                    // 2. 3D Spatial Braiding: Twist the spline out of its 2D geometric plane.
+                    let splineDirection = normalize(localEnd - localStart)
+                    var twistAxis = simd_cross(splineDirection, flowVector)
+                    
+                    // Failsafe: If the flow vector is perfectly parallel to the spline (cross product approaches 0),
+                    // fallback to crossing with the surface normal to guarantee an out-of-plane 3D twist.
+                    if simd_length(twistAxis) < 0.001 {
+                        let surfaceNormal = normalize(point)
+                        twistAxis = simd_cross(splineDirection, surfaceNormal)
+                    }
+                    
+                    var twistPush = simd_float3(0, 0, 0)
                     if simd_length(twistAxis) > 0.001 {
                         let twistMagnitude = solarRadius * 0.15 * influence * weight
-                        return point + (normalize(twistAxis) * twistMagnitude)
+                        twistPush = normalize(twistAxis) * twistMagnitude
                     }
+                    
+                    // Apply both the direct regional warp and the 3D twist
+                    return point + regionalPush + twistPush
                 }
-                return point
             }
             
             // 1. Ascending Quarter Point (Evaluates local tangent from p0 to p2)

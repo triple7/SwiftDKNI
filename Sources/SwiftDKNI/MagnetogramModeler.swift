@@ -398,7 +398,6 @@ public final class MagnetogramModeler: @unchecked Sendable {
         )
     }
     
-
     private func computeMagneticField(at point: simd_float3, regions: [(pos: simd_float3, flux: Float)]) -> simd_float3 {
         var bField = simd_float3(0, 0, 0)
         for region in regions {
