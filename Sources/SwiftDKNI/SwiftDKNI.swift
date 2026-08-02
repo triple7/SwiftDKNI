@@ -390,16 +390,25 @@ extension SwiftDKNI {
                 
                 // STAGE 3: THE FLOW FIELD (GPU RASTERIZATION)
                 print("Generating final CME Flow Volume via Spline Rasterization...")
+                let magneticResolution = 64
                 let volumeResult = self.generateMagneticVolumeTexture(
                     device: device,
                     lines: magneticLines,
                     solarRadius: sRadius,
-                    resolution: 128
+                    resolution: magneticResolution
                 )
                 sharedMagneticVolume = volumeResult.texture
+                let magneticVectorField = self.generateMagneticVectorFieldFromVolumeData(
+                    volumeData: volumeResult.volumeData,
+                    solarRadius: sRadius,
+                    resolution: magneticResolution)
+                
+                magneticVectorField.opacity = 0.2
                 
                 // STAGE 4: VISUAL GEOMETRY
                 let globalMagneticNode = geometryBuilder.createCoronalSurface(from: magneticLines, solarRadius: sRadius)
+                
+                coronalSurfaceNode.addChildNode(magneticVectorField)
                 coronalSurfaceNode.addChildNode(globalMagneticNode)
             }
             
@@ -469,7 +478,8 @@ extension SwiftDKNI {
                             print("Warning: Missing Magnetic Volume, CME will not render correctly.")
                         }
                     }
-                    coronalSurfaceNode.addChildNode(cmeNode)
+//                    coronalSurfaceNode.addChildNode(cmeNode)
+//                    break;
                 }
             }
             

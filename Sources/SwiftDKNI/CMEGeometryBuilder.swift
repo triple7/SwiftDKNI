@@ -162,7 +162,7 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         var currentIndex: Int32 = 0
         
         for line in lines {
-            guard !line.isOpen else { continue }
+            guard !line.isOpen else { continue } // To view just the open field line magnetic vectors, can uncomment this one
             
             let phase = Float.random(in: 0.0...1.0)
             

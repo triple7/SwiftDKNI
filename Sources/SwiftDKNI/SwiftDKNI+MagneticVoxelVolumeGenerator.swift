@@ -117,6 +117,110 @@ extension SwiftDKNI {
         
         return (startPoint, newApex, endPoint)
     }
+    public func generateMagneticVectorFieldFromVolumeData(
+        volumeData: [simd_float4],
+        solarRadius: Float,
+        resolution: Int
+    ) -> SCNNode{
+        
+        let gridBounds = solarRadius * 3.0
+        let step = (2.0 * gridBounds) / Float(resolution - 1)
+        
+        var vertices: [SCNVector3] = []
+        var colorFloats: [Float] = [] // Flat array for raw RGB memory
+        var indices: [Int32] = []
+        var vertexCount: Int32 = 0
+        
+        for z in 0..<resolution {
+            for y in 0..<resolution {
+                for x in 0..<resolution {
+                    let index = (z * resolution * resolution) + (y * resolution) + x
+                    let data = volumeData[index]
+                    
+                    // Empty voxels were set to 0.1, real data is higher
+                    if data.w > 0.11 {
+                        let posX = -gridBounds + Float(x) * step
+                        let posY = -gridBounds + Float(y) * step
+                        let posZ = -gridBounds + Float(z) * step
+                        
+                        let startPos = SCNVector3(posX, posY, posZ)
+                        
+                        // Map length to weight.
+                        // Note: You may need to tweak the 0.5 multiplier depending on your peakWeight
+                        let weightMultiplier: Float = 0.5
+                        let lineLength = step * data.w * weightMultiplier
+                        let endPos = SCNVector3(posX + data.x * lineLength,
+                                                posY + data.y * lineLength,
+                                                posZ + data.z * lineLength)
+                        
+                        vertices.append(startPos)
+                        vertices.append(endPos)
+                        
+                        // 1. Find the outward direction from the origin (0,0,0) to this voxel
+                        let voxelPos = simd_float3(posX, posY, posZ)
+                        let outwardDir = simd_length(voxelPos) > 0.0001 ? simd_normalize(voxelPos) : simd_float3(0, 1, 0)
+                        
+                        // 2. The magnetic vector direction
+                        let magDir = simd_float3(data.x, data.y, data.z)
+                        
+                        // 3. Dot product tells us alignment (-1.0 to 1.0)
+                        let alignment = simd_dot(outwardDir, magDir)
+                        
+                        // 4. Map alignment to a 0.0 to 1.0 range
+                        // 0.0 = pointing toward sun, 1.0 = pointing away from sun
+                        let t = (alignment + 1.0) * 0.5
+                        
+                        // 5. Build the gradient
+                        // When t=1 (away), color is Red (1, 0, 0)
+                        // When t=0 (toward), color is White (1, 1, 1)
+                        let r: Float = 1.0
+                        let g: Float = 1.0 - t
+                        let b: Float = 1.0 - t
+                        
+                        // Add the color twice (once for start vertex, once for end vertex)
+                        colorFloats.append(contentsOf: [r, g, b, r, g, b])
+                        // Connect start and end vertices
+                        indices.append(vertexCount)
+                        indices.append(vertexCount + 1)
+                        vertexCount += 2
+                    }
+                }
+            }
+        }
+        
+        if !vertices.isEmpty {
+            let vertexSource = SCNGeometrySource(vertices: vertices)
+            
+            // Build a high-performance color source from raw memory to avoid UIColor overhead
+            let colorData = Data(bytes: colorFloats, count: colorFloats.count * MemoryLayout<Float>.stride)
+            let colorSource = SCNGeometrySource(data: colorData,
+                                                semantic: .color,
+                                                vectorCount: colorFloats.count / 3,
+                                                usesFloatComponents: true,
+                                                componentsPerVector: 3,
+                                                bytesPerComponent: MemoryLayout<Float>.stride,
+                                                dataOffset: 0,
+                                                dataStride: MemoryLayout<Float>.stride * 3)
+            
+            let element = SCNGeometryElement(indices: indices, primitiveType: .line)
+            let vectorGeometry = SCNGeometry(sources: [vertexSource, colorSource], elements: [element])
+            
+            let vectorMaterial = SCNMaterial()
+            vectorMaterial.lightingModel = .constant // Skip lighting math
+            // SceneKit needs a white diffuse base to multiply the vertex colors against
+            // Use NSColor.white for macOS or UIColor.white for iOS
+            vectorMaterial.blendMode = .alpha
+            // 2. Prevent transparent lines from occluding (blocking) lines behind them
+            vectorMaterial.writesToDepthBuffer = false
+            
+            vectorMaterial.diffuse.contents = NSColor.white
+            vectorGeometry.materials = [vectorMaterial]
+            
+            let vectorNode = SCNNode(geometry: vectorGeometry)
+            return vectorNode
+        }
+        return SCNNode()
+    }
     
     public func generateMagneticVolumeTexture(
         device: MTLDevice,
@@ -204,6 +308,7 @@ extension SwiftDKNI {
             let resSq = resolution * resolution
             
             for line in lines {
+                // if !line.isOpen {continue}  // uncomment to only look at the open lines.
                 for i in 0..<samplesPerLine {
                     let t = Float(i) / Float(samplesPerLine - 1)
                     let currentPos = line.position(at: t) * solarRadius
