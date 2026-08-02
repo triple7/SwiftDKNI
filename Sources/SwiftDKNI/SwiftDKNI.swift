@@ -360,13 +360,15 @@ extension SwiftDKNI {
                 magneticLines = magneticLines.map { line in
                     // 🚨 NEW: Warp the root points to match the GPU's active region bulging
                     let warpedP0 = applyTopologicalWarp(line.p0)
-                    let warpedP2 = applyTopologicalWarp(line.p2)
+                    let warpedP4 = applyTopologicalWarp(line.p4)
                     
                     // A. Bend the apex based on the ambient voxel vectors
-                    var (newP0, newP1, newP2) = self.applyMagneticInfluenceToSpline(
-                        startPoint: warpedP0,
-                        apexPoint: line.p1,
-                        endPoint: warpedP2,
+                    var (newP0, newP1, newP2, newP3, newP4) = self.applyMagneticInfluenceToSpline(
+                        p0: warpedP0,
+                        p1: line.p1,
+                        p2: line.p2,
+                        p3: line.p3,
+                        p4: warpedP4,
                         isOpen: line.isOpen,
                         pfssVolume: ambientPFSSArray,
                         solarRadius: sRadius
@@ -376,11 +378,15 @@ extension SwiftDKNI {
                     if line.isOpen {
                         newP1 = self.applySolarRotationShift(point: newP1, solarRadius: sRadius)
                         newP2 = self.applySolarRotationShift(point: newP2, solarRadius: sRadius)
+                        newP3 = self.applySolarRotationShift(point: newP3, solarRadius: sRadius)
+                        newP4 = self.applySolarRotationShift(point: newP4, solarRadius: sRadius)
                     } else {
                         newP1 = self.applySolarRotationShift(point: newP1, solarRadius: sRadius, rotationRate: 0.25)
+                        newP2 = self.applySolarRotationShift(point: newP2, solarRadius: sRadius, rotationRate: 0.25)
+                        newP3 = self.applySolarRotationShift(point: newP3, solarRadius: sRadius, rotationRate: 0.25)
                     }
                     
-                    return MagneticLoopLine(p0: newP0, p1: newP1, p2: newP2, isOpen: line.isOpen, intensity: line.intensity)
+                    return MagneticLoopLine(p0: newP0, p1: newP1, p2: newP2, p3: newP3, p4: newP4, isOpen: line.isOpen, intensity: line.intensity)
                 }
                 
                 let magneticLoopEnd = CACurrentMediaTime()
