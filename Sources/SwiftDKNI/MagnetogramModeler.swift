@@ -418,130 +418,148 @@ public final class MagnetogramModeler: @unchecked Sendable {
     }
 
     private func traceFieldLine(startPoint p0: simd_float3, regions: [(pos: simd_float3, flux: Float)], intensity: Float, twist: simd_float2) -> MagneticLoopLine {
-        var currentPos = p0
-        let stepSize: Float = 0.02
-        let maxSteps = 250
-        
-        // Push slightly outwards to start
-        currentPos += simd_normalize(p0) * 0.01
-        var isOpen = true
-        
-        // We cache the traced path to accurately extract our 5 control points later
-        var path: [simd_float3] = [p0]
-        var maxRadius: Float = simd_length(currentPos)
-        var apexIndex = 0
-        
-        for _ in 0..<maxSteps {
-            let bField = computeMagneticField(at: currentPos, regions: regions)
+            var currentPos = p0
+            let stepSize: Float = 0.02
+            let maxSteps = 250
             
-            let length = simd_length(bField)
-            if length < 0.00001 || length.isNaN { break }
+            // Push slightly outwards to start
+            currentPos += simd_normalize(p0) * 0.01
+            var isOpen = true
             
-            let direction = bField / length
-            currentPos += direction * stepSize
-            let currentRadius = simd_length(currentPos)
+            // We cache the traced path to accurately extract our 5 control points later
+            var path: [simd_float3] = [p0]
+            var maxRadius: Float = simd_length(currentPos)
+            var apexIndex = 0
             
-            path.append(currentPos)
-            
-            if currentRadius > maxRadius {
-                maxRadius = currentRadius
-                apexIndex = path.count - 1
+            for _ in 0..<maxSteps {
+                let bField = computeMagneticField(at: currentPos, regions: regions)
+                
+                let length = simd_length(bField)
+                if length < 0.00001 || length.isNaN { break }
+                
+                let direction = bField / length
+                currentPos += direction * stepSize
+                let currentRadius = simd_length(currentPos)
+                
+                path.append(currentPos)
+                
+                if currentRadius > maxRadius {
+                    maxRadius = currentRadius
+                    apexIndex = path.count - 1
+                }
+                
+                if currentRadius <= 1.0 {
+                    isOpen = false
+                    path[path.count - 1] = simd_normalize(currentPos) // Clamp exactly to surface
+                    break
+                }
+                
+                if currentRadius > 6.0 {
+                    isOpen = true
+                    break
+                }
             }
             
-            if currentRadius <= 1.0 {
-                isOpen = false
-                path[path.count - 1] = simd_normalize(currentPos) // Clamp exactly to surface
-                break
+            // --- EXTRACT 5 CONTROL POINTS FROM THE TRACED PATH ---
+            var p_0 = path[0]
+            var p_4 = path.last!
+            
+            var p_1: simd_float3
+            var p_2: simd_float3
+            var p_3: simd_float3
+            
+            if isOpen {
+                // OPEN TRAJECTORY (CME)
+                // The spline should escape outward, never closing to the surface.
+                let count = path.count
+                p_1 = path[count / 4]
+                p_2 = path[count / 2]
+                p_3 = path[(count * 3) / 4]
+                
+                // Failsafe: If it ran out of steps before truly escaping the volume,
+                // explicitly project p_4 outward so the CME always blows into the void.
+                if simd_length(p_4) < 6.0 {
+                    let escapeDir = simd_normalize(p_4 - p_3)
+                    p_4 = p_4 + (escapeDir * (6.0 - simd_length(p_4)))
+                    
+                    // Adjust p_3 so it transitions smoothly into the new projected p_4
+                    p_3 = simd_mix(p_2, p_4, simd_float3(repeating: 0.5))
+                }
+                
+                maxRadius = simd_length(p_4)
+                
+            } else {
+                // CLOSED TRAJECTORY (Coronal Loop)
+                // The spline arches and returns to the surface.
+                p_2 = path[apexIndex]
+                p_1 = path[max(0, apexIndex / 2)]
+                let remainderIdx = apexIndex + (path.count - 1 - apexIndex) / 2
+                p_3 = path[min(path.count - 1, remainderIdx)]
             }
             
-            if currentRadius > 6.0 {
-                isOpen = true
-                break
+            // --- APPLY REGIONAL HELICITY (TWIST) TO B-SPLINE CONTROL POINTS ---
+            // A helper closure to apply the magnetic twist vector to a specific control point.
+            let applyTwist = { (point: inout simd_float3) in
+                var norm = simd_normalize(point)
+                if norm.x.isNaN { norm = simd_normalize(p_0) } // Safety catch
+                
+                let up = simd_float3(0, 1, 0)
+                var tangent = simd_cross(norm, up)
+                
+                if simd_length(tangent) < 0.001 { tangent = simd_float3(1, 0, 0) }
+                tangent = simd_normalize(tangent)
+                
+                let binormal = simd_normalize(simd_cross(tangent, norm))
+                
+                // The lean scales dynamically with the height of the point so roots stay anchored
+                let leanStrength: Float = 0.15 * simd_length(point)
+                
+                let safeTwistX = twist.x.isNaN ? 0.0 : twist.x
+                let safeTwistY = twist.y.isNaN ? 0.0 : twist.y
+                
+                let directionalOffset = (tangent * safeTwistX + binormal * safeTwistY) * leanStrength
+                point += directionalOffset
             }
-        }
-        
-        // --- EXTRACT 5 CONTROL POINTS FROM THE TRACED PATH ---
-        var p_0 = path[0]
-        var p_4 = path[path.count - 1]
-        
-        var p_2: simd_float3
-        var p_1: simd_float3
-        var p_3: simd_float3
-        
-        if isOpen && simd_length(p_4) <= 3.0 {
-            // Premature loop death failsafe - mathematically force an open trajectory
-            p_4 = path.last!
-            p_2 = p_0 + (simd_normalize(p_0) * 1.5)
-            p_1 = simd_mix(p_0, p_2, simd_float3(repeating: 0.5))
-            p_3 = simd_mix(p_2, p_4, simd_float3(repeating: 0.5))
-            maxRadius = simd_length(p_2)
-        } else {
-            // Natural trajectory - extract indices evenly across the B-spline
-            p_2 = path[apexIndex]
-            p_1 = path[max(0, apexIndex / 2)]
             
-            let remainderIdx = apexIndex + (path.count - 1 - apexIndex) / 2
-            p_3 = path[min(path.count - 1, remainderIdx)]
-        }
-        
-        // --- APPLY REGIONAL HELICITY (TWIST) TO THE APEX (P2) ---
-        var p2Norm = simd_normalize(p_2)
-        if p2Norm.x.isNaN { p2Norm = simd_normalize(p_0) } // Safety catch
-        
-        let up = simd_float3(0, 1, 0)
-        var tangent = simd_cross(p2Norm, up)
-        
-        if simd_length(tangent) < 0.001 { tangent = simd_float3(1, 0, 0) }
-        tangent = simd_normalize(tangent)
-        
-        let binormal = simd_normalize(simd_cross(tangent, p2Norm))
-        
-        let leanStrength: Float = 0.15 * maxRadius
-        
-        // Protect against NaN in twist vector
-        let safeTwistX = twist.x.isNaN ? 0.0 : twist.x
-        let safeTwistY = twist.y.isNaN ? 0.0 : twist.y
-        
-        let directionalOffset = (tangent * safeTwistX + binormal * safeTwistY) * leanStrength
-        p_2 += directionalOffset
-        
-        // --- ANTI-NAN GEOMETRY FAIL-SAFE ---
-        // Force minimum spatial separation to guarantee the Metal derivative never normalizes a zero-vector
-        if simd_distance(p_1, p_0) < 0.05 { p_1 = p_0 + (p2Norm * 0.05) }
-        if simd_distance(p_2, p_1) < 0.05 { p_2 = p_1 + (p2Norm * 0.05) + (tangent * 0.05) }
-        if simd_distance(p_3, p_2) < 0.05 { p_3 = p_2 + (p2Norm * 0.05) }
-        if simd_distance(p_4, p_3) < 0.05 {
-            let escapeVector = simd_normalize(simd_cross(p2Norm, tangent))
-            p_4 = p_3 + (escapeVector * 0.05)
-        }
-        
-        // 🚨 THE NaN TRAP 🚨
-        let hasNaN = p_0.x.isNaN || p_0.y.isNaN || p_0.z.isNaN ||
-                     p_1.x.isNaN || p_1.y.isNaN || p_1.z.isNaN ||
-                     p_2.x.isNaN || p_2.y.isNaN || p_2.z.isNaN ||
-                     p_3.x.isNaN || p_3.y.isNaN || p_3.z.isNaN ||
-                     p_4.x.isNaN || p_4.y.isNaN || p_4.z.isNaN
-        
-        if hasNaN {
-            print("🚨 NaN TRAP TRIGGERED 🚨")
-            print("Start Point: \(p_0)")
-            print("Final p_2 (Apex): \(p_2)")
-            print("Final p_4 (End): \(p_4)")
-            print("Twist vector: \(twist)")
-            print("Max Radius: \(maxRadius)")
-            print("---------------------------------")
+            // Apply the twist to all three dynamic bezier points
+            applyTwist(&p_1)
+            applyTwist(&p_2)
+            applyTwist(&p_3)
             
-            // Return a safe dummy line slightly above the surface so SceneKit doesn't crash
-            let safe0 = simd_float3(0, 1.05, 0)
-            let safe1 = simd_float3(0, 1.10, 0)
-            let safe2 = simd_float3(0, 1.15, 0)
-            let safe3 = simd_float3(0, 1.20, 0)
-            let safe4 = simd_float3(0, 1.25, 0)
-            return MagneticLoopLine(p0: safe0, p1: safe1, p2: safe2, p3: safe3, p4: safe4, isOpen: isOpen, intensity: intensity)
+            // --- ANTI-NAN GEOMETRY FAIL-SAFE ---
+            // Force minimum spatial separation to guarantee the Metal derivative never normalizes a zero-vector
+            if simd_distance(p_1, p_0) < 0.05 { p_1 = p_0 + (simd_normalize(p_0) * 0.05) }
+            if simd_distance(p_2, p_1) < 0.05 { p_2 = p_1 + (simd_normalize(p_1) * 0.05) }
+            if simd_distance(p_3, p_2) < 0.05 { p_3 = p_2 + (simd_normalize(p_2) * 0.05) }
+            if simd_distance(p_4, p_3) < 0.05 { p_4 = p_3 + (simd_normalize(p_3) * 0.05) }
+            
+            // 🚨 THE NaN TRAP 🚨
+            let hasNaN = p_0.x.isNaN || p_0.y.isNaN || p_0.z.isNaN ||
+                         p_1.x.isNaN || p_1.y.isNaN || p_1.z.isNaN ||
+                         p_2.x.isNaN || p_2.y.isNaN || p_2.z.isNaN ||
+                         p_3.x.isNaN || p_3.y.isNaN || p_3.z.isNaN ||
+                         p_4.x.isNaN || p_4.y.isNaN || p_4.z.isNaN
+            
+            if hasNaN {
+                print("🚨 NaN TRAP TRIGGERED 🚨")
+                print("Start Point: \(p_0)")
+                print("Final p_2 (Apex): \(p_2)")
+                print("Final p_4 (End): \(p_4)")
+                print("Twist vector: \(twist)")
+                print("Max Radius: \(maxRadius)")
+                print("---------------------------------")
+                
+                // Return a safe dummy line slightly above the surface so SceneKit doesn't crash
+                let safe0 = simd_float3(0, 1.05, 0)
+                let safe1 = simd_float3(0, 1.10, 0)
+                let safe2 = simd_float3(0, 1.15, 0)
+                let safe3 = simd_float3(0, 1.20, 0)
+                let safe4 = simd_float3(0, 1.25, 0)
+                return MagneticLoopLine(p0: safe0, p1: safe1, p2: safe2, p3: safe3, p4: safe4, isOpen: isOpen, intensity: intensity)
+            }
+            
+            return MagneticLoopLine(p0: p_0, p1: p_1, p2: p_2, p3: p_3, p4: p_4, isOpen: isOpen, intensity: intensity)
         }
-        
-        return MagneticLoopLine(p0: p_0, p1: p_1, p2: p_2, p3: p_3, p4: p_4, isOpen: isOpen, intensity: intensity)
-    }
 
     public func calculateMagneticLoops(from data: MagnetogramData, connectionThresholdDegrees: Float = 25.0) -> [MagneticLoopLine] {
         // 1. Unpack the new regional twists dictionary
