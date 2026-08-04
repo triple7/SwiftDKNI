@@ -367,30 +367,48 @@ extension SwiftDKNI {
         // --- 4. RESOLVE COEFFICIENTS & DEBUG TELEMETRY ---
         var magneticVoxelCount = 0
         var emptyVoxelCount = 0
+        var sunVoxelCount = 0 // Optional: track how many voxels are inside the sun
         var peakWeight: Float = 0.0
         
         volumeData.withUnsafeMutableBufferPointer { buffer in
             for i in 0..<voxelCount {
-                let data = buffer[i]
+                // Get the physical position of the current voxel
+                let voxelPos = simd_float3(xs[i], ys[i], zs[i])
+                let distFromCenter = simd_length(voxelPos)
                 
-                if data.w > 0.0 {
-                    magneticVoxelCount += 1
-                    peakWeight = max(peakWeight, data.w)
+                // 1. CHECK IF INSIDE THE SUN
+                if distFromCenter <= solarRadius {
+                    sunVoxelCount += 1
                     
-                    let sumVector = simd_float3(data.x, data.y, data.z)
+                    // 🚨 ANTI-NAN SAFEGUARD (Handles the exact 0,0,0 center)
+                    let outwardDir = distFromCenter > 0.0001 ? simd_normalize(voxelPos) : simd_float3(0, 1.0, 0)
                     
-                    // 🚨 ANTI-NAN SAFEGUARD 2
-                    let averagedDir = simd_length(sumVector) > 0.0001 ? simd_normalize(sumVector) : simd_float3(0, 1.0, 0)
-                    buffer[i] = simd_float4(averagedDir.x, averagedDir.y, averagedDir.z, 1.0)
+                    // Override with uniform outward vector, weight 1.0
+                    buffer[i] = simd_float4(outwardDir.x, outwardDir.y, outwardDir.z, 1.0)
                     
                 } else {
-                    emptyVoxelCount += 1
-                    let outwardDir = simd_normalize(simd_float3(xs[i], ys[i], zs[i]))
-                    buffer[i] = simd_float4(outwardDir.x, outwardDir.y, outwardDir.z, 0.1)
+                    // 2. OUTSIDE THE SUN: USE RASTERIZED FIELD LINES
+                    let data = buffer[i]
+                    
+                    if data.w > 0.0 {
+                        magneticVoxelCount += 1
+                        peakWeight = max(peakWeight, data.w)
+                        
+                        let sumVector = simd_float3(data.x, data.y, data.z)
+                        
+                        // 🚨 ANTI-NAN SAFEGUARD 2
+                        let averagedDir = simd_length(sumVector) > 0.0001 ? simd_normalize(sumVector) : simd_float3(0, 1.0, 0)
+                        buffer[i] = simd_float4(averagedDir.x, averagedDir.y, averagedDir.z, 1.0)
+                        
+                    } else {
+                        // 3. EMPTY VOXELS (No field lines touched here)
+                        emptyVoxelCount += 1
+                        let outwardDir = distFromCenter > 0.0001 ? simd_normalize(voxelPos) : simd_float3(0, 1.0, 0)
+                        buffer[i] = simd_float4(outwardDir.x, outwardDir.y, outwardDir.z, 0.1)
+                    }
                 }
             }
         }
-        
         print("==================================================")
         print("🧲 VOXEL GENERATION TELEMETRY")
         print("==================================================")
