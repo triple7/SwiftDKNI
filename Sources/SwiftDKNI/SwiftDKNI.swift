@@ -415,7 +415,7 @@ extension SwiftDKNI {
                 let globalMagneticNode = geometryBuilder.createCoronalSurface(from: magneticLines, solarRadius: sRadius)
                 
                 coronalSurfaceNode.addChildNode(magneticVectorField)
-                coronalSurfaceNode.addChildNode(globalMagneticNode)
+//                coronalSurfaceNode.addChildNode(globalMagneticNode)
             }
             
             var firstIgnitionTime: Float? = nil
@@ -484,7 +484,7 @@ extension SwiftDKNI {
                             print("Warning: Missing Magnetic Volume, CME will not render correctly.")
                         }
                     }
-//                    coronalSurfaceNode.addChildNode(cmeNode)
+                    coronalSurfaceNode.addChildNode(cmeNode)
 //                    break;
                 }
             }
@@ -494,7 +494,7 @@ extension SwiftDKNI {
             try await applySolarSurfaceMaterials(to: sphere, topologicalImage: fetchedTopologicalImage, cachedIfExists: cachedIfExists)
             
             // --- STATIC TIMELINE DEBUGGER ---
-            let debugGlobalTime: Float = 5.0
+            let debugGlobalTime: Float = 0.0
             print("⏱️ Diagnostic Override: Forcing global clock to \(debugGlobalTime)s for all CMEs.")
             
             coronalSurfaceNode.childNodes.forEach { node in
