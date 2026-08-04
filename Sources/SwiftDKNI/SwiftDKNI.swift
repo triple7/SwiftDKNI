@@ -396,17 +396,26 @@ extension SwiftDKNI {
                 
                 // STAGE 3: THE FLOW FIELD (GPU RASTERIZATION)
                 print("Generating final CME Flow Volume via Spline Rasterization...")
+                let magneticResolution = 64
                 let volumeResult = self.generateMagneticVolumeTexture(
                     device: device,
                     lines: magneticLines,
                     solarRadius: sRadius,
-                    resolution: 128
+                    resolution: magneticResolution
                 )
                 sharedMagneticVolume = volumeResult.texture
+                let magneticVectorField = self.generateMagneticVectorFieldFromVolumeData(
+                    volumeData: volumeResult.volumeData,
+                    solarRadius: sRadius,
+                    resolution: magneticResolution)
+                
+                magneticVectorField.opacity = 0.2
                 
                 // STAGE 4: VISUAL GEOMETRY
                 let globalMagneticNode = geometryBuilder.createCoronalSurface(from: magneticLines, solarRadius: sRadius)
-                coronalSurfaceNode.addChildNode(globalMagneticNode)
+                
+                coronalSurfaceNode.addChildNode(magneticVectorField)
+//                coronalSurfaceNode.addChildNode(globalMagneticNode)
             }
             
             var firstIgnitionTime: Float? = nil
@@ -476,6 +485,7 @@ extension SwiftDKNI {
                         }
                     }
                     coronalSurfaceNode.addChildNode(cmeNode)
+//                    break;
                 }
             }
             
@@ -484,7 +494,7 @@ extension SwiftDKNI {
             try await applySolarSurfaceMaterials(to: sphere, topologicalImage: fetchedTopologicalImage, cachedIfExists: cachedIfExists)
             
             // --- STATIC TIMELINE DEBUGGER ---
-            let debugGlobalTime: Float = 5.0
+            let debugGlobalTime: Float = 0.0
             print("⏱️ Diagnostic Override: Forcing global clock to \(debugGlobalTime)s for all CMEs.")
             
             coronalSurfaceNode.childNodes.forEach { node in
