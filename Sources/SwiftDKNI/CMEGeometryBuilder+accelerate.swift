@@ -46,8 +46,9 @@ extension CMEGeometryBuilder {
     
     public func buildAcceleratedEnergyTunnels(from lines: [MagneticLoopLine], particlesPerUnitLength: Float = 50.0, solarRadius: Float) -> SCNNode {
                 
-            let validLines = lines.filter { !$0.isOpen }
-                
+//            let validLines = lines.filter { !$0.isOpen }
+let validLines = lines
+        
             // 1. PRE-CALCULATE DYNAMIC PARTICLE COUNTS
             var lineParticleCounts: [Int] = []
             var totalParticles = 0
