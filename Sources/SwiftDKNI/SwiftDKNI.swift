@@ -421,7 +421,7 @@ extension SwiftDKNI {
                     // STAGE 4: VISUAL GEOMETRY
                     let globalMagneticNode = geometryBuilder.createCoronalSurface(from: magneticLines, solarRadius: sRadius)
                     
-                    coronalSurfaceNode.addChildNode(magneticVectorField)
+//                    coronalSurfaceNode.addChildNode(magneticVectorField)
                     coronalSurfaceNode.addChildNode(globalMagneticNode)
                 }
                 
