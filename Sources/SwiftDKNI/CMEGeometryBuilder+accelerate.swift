@@ -254,13 +254,12 @@ extension CMEGeometryBuilder {
                 var defaultTwinkle: Float = 15.0
                 material.setValue(Data(bytes: &defaultTwinkle, count: MemoryLayout<Float>.size), forKey: "u_twinkleSpeed")
                     
-                let coreColor = SCNVector3(1.0, 0.95, 0.8)
+                let coreColor = SCNVector3(1.0, 0.85, 0.0)
                 material.setValue(NSValue(scnVector3: coreColor), forKey: "u_coreColor")
-                let midColor = SCNVector3(1.0, 0.4, 0.0)
+                let midColor = SCNVector3(1.0, 0.35, 0.0)
                 material.setValue(NSValue(scnVector3: midColor), forKey: "u_midColor")
                 let edgeColor = SCNVector3(0.4, 0.02, 0.0)
                 material.setValue(NSValue(scnVector3: edgeColor), forKey: "u_edgeColor")
-
                 var hdrMultiplier: Float = 0.8
                 material.setValue(Data(bytes: &hdrMultiplier, count: MemoryLayout<Float>.size), forKey: "u_hdrMultiplier")
             } catch {
