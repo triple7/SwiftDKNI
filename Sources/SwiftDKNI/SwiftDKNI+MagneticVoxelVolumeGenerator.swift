@@ -123,122 +123,124 @@ extension SwiftDKNI {
     }
     
     public func applyMagneticInfluenceToSpline(
-        p0: simd_float3,
-        p1: simd_float3,
-        p2: simd_float3,
-        p3: simd_float3,
-        p4: simd_float3,
-        isOpen: Bool,
-        pfssVolume: [simd_float4],
-        regionalFlows: [RegionalFlow],
-        solarRadius: Float
-    ) -> (simd_float3, simd_float3, simd_float3, simd_float3, simd_float3) {
-        
-        func applyInfluence(to point: simd_float3, localStart: simd_float3, localEnd: simd_float3, weight: Float) -> simd_float3 {
-            let ambientField = sampleMagneticVolume(
-                at: point,
-                pfssVolume: pfssVolume,
-                solarRadius: solarRadius
-            )
+            p0: simd_float3,
+            p1: simd_float3,
+            p2: simd_float3,
+            p3: simd_float3,
+            p4: simd_float3,
+            isOpen: Bool,
+            pfssVolume: [simd_float4],
+            regionalFlows: [RegionalFlow],
+            solarRadius: Float
+        ) -> (simd_float3, simd_float3, simd_float3, simd_float3, simd_float3) {
             
-            var flowVector = simd_make_float3(ambientField.x, ambientField.y, ambientField.z)
-            let rawInfluence = ambientField.w
+            // 1. 🧬 GENERATE STABLE CHIRALITY (Handedness) FOR THIS LOOP
+            // We use the root position (p0) to deterministically decide if this loop twists left or right
+            let hashDot = p0.x * 12.9898 + p0.y * 78.233 + p0.z * 37.719
+            let hashSin = sin(hashDot) * 43758.5453
+            let loopHash = hashSin - floor(hashSin)
+            let chirality: Float = loopHash > 0.5 ? 1.0 : -1.0
+            let loopNoise = (Float(loopHash) - 0.5) * 2.0 // Range -1.0 to 1.0
             
-            // --- 🌍 GLOBAL TOPOLOGY: Add the macro-winds from other regions ---
-            var macroWind = simd_float3(0, 0, 0)
-            for flow in regionalFlows {
-                let rVec = flow.center - point
-                let distSq = simd_length_squared(rVec)
+            // 2. ADD TORSION PHASE PARAMETER
+            func applyInfluence(to point: simd_float3, localStart: simd_float3, localEnd: simd_float3, weight: Float, torsionPhase: Float) -> simd_float3 {
+                let ambientField = sampleMagneticVolume(
+                    at: point,
+                    pfssVolume: pfssVolume,
+                    solarRadius: solarRadius
+                )
                 
-                // Prevent self-amplification; only allow distant regions to pull
-                if distSq > 0.15 && distSq < 4.0 {
-                    let falloff = 1.0 / (distSq * sqrt(distSq) + 0.001)
-                    macroWind += flow.direction * (flow.magnitude * 0.0005 * falloff)
+                var flowVector = simd_make_float3(ambientField.x, ambientField.y, ambientField.z)
+                let rawInfluence = ambientField.w
+                
+                // --- 🌍 GLOBAL TOPOLOGY: Add the macro-winds from other regions ---
+                var macroWind = simd_float3(0, 0, 0)
+                for flow in regionalFlows {
+                    let rVec = flow.center - point
+                    let distSq = simd_length_squared(rVec)
+                    
+                    if distSq > 0.15 && distSq < 4.0 {
+                        let falloff = 1.0 / (distSq * sqrt(distSq) + 0.001)
+                        macroWind += flow.direction * (flow.magnitude * 0.0005 * falloff)
+                    }
                 }
-            }
-            
-            if simd_length(macroWind) > 0.001 {
-                flowVector = normalize(flowVector + macroWind)
-            } else if simd_length(flowVector) > 0.001 {
-                flowVector = normalize(flowVector)
-            } else {
-                flowVector = simd_float3(0, 1, 0)
-            }
-            
-            // NON-LINEAR BOOST: Lift quiet regions with a hard limit to prevent scaling chaos
-            let boostedInfluence = min(1.5, max(0.15, pow(rawInfluence, 0.4)))
-            let surfaceNormal = normalize(point)
-            
-            if isOpen {
-                // OPEN SPLINES: Escape trajectory dominated by the radial flow
-                let heightFromCenter = simd_length(point)
-                let heightLeverage = max(1.0, heightFromCenter / solarRadius)
-                let escapePush = flowVector * (solarRadius * 0.6 * boostedInfluence * weight * heightLeverage)
                 
-                return point + escapePush
-                
-            } else {
-                // CLOSED SPLINES: Tangential Conformation + Controlled Radial Bulge
-                
-                let radialComponent = dot(flowVector, surfaceNormal)
-                let tangentialFlow = flowVector - (radialComponent * surfaceNormal)
-                
-                var sweepDirection = simd_float3(0, 1, 0)
-                if simd_length(tangentialFlow) > 0.001 {
-                    sweepDirection = normalize(tangentialFlow)
+                if simd_length(macroWind) > 0.001 {
+                    flowVector = normalize(flowVector + macroWind)
+                } else if simd_length(flowVector) > 0.001 {
+                    flowVector = normalize(flowVector)
                 } else {
-                    sweepDirection = normalize(simd_cross(surfaceNormal, simd_float3(0, 1, 0)))
+                    flowVector = simd_float3(0, 1, 0)
                 }
                 
-                // 1. The horizontal sweep across the curvature of the sun
-                let tangentialPush = sweepDirection * (solarRadius * 0.35 * boostedInfluence * weight)
+                let boostedInfluence = min(1.5, max(0.15, pow(rawInfluence, 0.4)))
+                let surfaceNormal = normalize(point)
                 
-                // 2. 🚨 THE CONTROLLED RADIAL BULGE
-                // Use the unclamped `rawInfluence` to detect peak active zones.
-                let activityThreshold: Float = 15.0 // Base threshold to ignore the quiet sun
-                let radialBulgeFactor = max(0.0, rawInfluence - activityThreshold)
-                
-                // Cap the outward explosion so it doesn't break the camera view.
-                // A cap of 0.4 means the loop can bulge outward a max of 40% of the solar radius.
-                let clampedBulge = min(radialBulgeFactor * 0.015, 0.4)
-                
-                // Only push outward if the flow vector is actually blowing away from the surface
-                let outwardLift = max(0.0, radialComponent)
-                let radialPush = surfaceNormal * (outwardLift * clampedBulge * solarRadius * weight)
-                
-                let regionalPush = tangentialPush + radialPush
-                
-                // 3. SPATIAL HASH (Micro-Braiding)
-                let dotProduct = point.x * 12.9898 + point.y * 78.233 + point.z * 37.719
-                let sinVal = sin(dotProduct) * 43758.5453
-                let spatialHash = sinVal - floor(sinVal)
-                let noiseOffset = (Float(spatialHash) - 0.5) * 2.0
-                
-                let splineDirection = normalize(localEnd - localStart)
-                var twistAxis = simd_cross(splineDirection, flowVector)
-                
-                if simd_length(twistAxis) < 0.001 {
-                    let chaoticNormal = normalize(surfaceNormal + simd_float3(noiseOffset * 0.6))
-                    twistAxis = simd_cross(splineDirection, chaoticNormal)
+                if isOpen {
+                    let heightFromCenter = simd_length(point)
+                    let heightLeverage = max(1.0, heightFromCenter / solarRadius)
+                    let escapePush = flowVector * (solarRadius * 0.6 * boostedInfluence * weight * heightLeverage)
+                    return point + escapePush
+                    
+                } else {
+                    // CLOSED SPLINES: Tangential Conformation + Radial Bulge + True Torsion
+                    
+                    let radialComponent = dot(flowVector, surfaceNormal)
+                    let tangentialFlow = flowVector - (radialComponent * surfaceNormal)
+                    
+                    var sweepDirection = simd_float3(0, 1, 0)
+                    if simd_length(tangentialFlow) > 0.001 {
+                        sweepDirection = normalize(tangentialFlow)
+                    } else {
+                        sweepDirection = normalize(simd_cross(surfaceNormal, simd_float3(0, 1, 0)))
+                    }
+                    
+                    // Add a fraction of loopNoise to the sweep so neighboring parallel loops fan out naturally
+                    let fannedSweep = normalize(sweepDirection + (simd_float3(loopNoise) * 0.15))
+                    let tangentialPush = fannedSweep * (solarRadius * 0.35 * boostedInfluence * weight)
+                    
+                    let activityThreshold: Float = 15.0
+                    let radialBulgeFactor = max(0.0, rawInfluence - activityThreshold)
+                    let clampedBulge = min(radialBulgeFactor * 0.015, 0.4)
+                    
+                    let outwardLift = max(0.0, radialComponent)
+                    let radialPush = surfaceNormal * (outwardLift * clampedBulge * solarRadius * weight)
+                    
+                    let regionalPush = tangentialPush + radialPush
+                    
+                    // 🚨 TRUE 3D TORSION
+                    let splineDirection = normalize(localEnd - localStart)
+                    var twistAxis = simd_cross(splineDirection, flowVector)
+                    
+                    if simd_length(twistAxis) < 0.001 {
+                        let chaoticNormal = normalize(surfaceNormal + simd_float3(loopNoise * 0.6))
+                        twistAxis = simd_cross(splineDirection, chaoticNormal)
+                    }
+                    
+                    var twistPush = simd_float3(0, 0, 0)
+                    if simd_length(twistAxis) > 0.001 {
+                        // Multiply by chirality (left/right twist) and the spatial torsion phase
+                        // This forces p1 to bend sideways differently than p3, creating an S-curve
+                        let twistMagnitude = solarRadius * 0.20 * boostedInfluence * weight
+                        twistPush = normalize(twistAxis) * twistMagnitude * torsionPhase * chirality
+                    }
+                    
+                    return point + regionalPush + twistPush
                 }
-                
-                var twistPush = simd_float3(0, 0, 0)
-                if simd_length(twistAxis) > 0.001 {
-                    let twistMagnitude = solarRadius * 0.15 * boostedInfluence * weight
-                    twistPush = normalize(twistAxis) * twistMagnitude * (1.0 + (noiseOffset * 0.4))
-                }
-                
-                return point + regionalPush + twistPush
             }
+            
+            // Ascending Point: Twists hard in the chiral direction (+1.0)
+            let newP1 = applyInfluence(to: p1, localStart: p0, localEnd: p2, weight: 0.7, torsionPhase: 1.0)
+            
+            // Apex Point: Remains mostly central, with a tiny randomized wobble to break symmetry
+            let newP2 = applyInfluence(to: p2, localStart: p0, localEnd: p4, weight: 1.0, torsionPhase: loopNoise * 0.3)
+            
+            // Descending Point: Twists hard in the opposite chiral direction (-1.0)
+            let newP3 = applyInfluence(to: p3, localStart: p2, localEnd: p4, weight: 0.7, torsionPhase: -1.0)
+            
+            return (p0, newP1, newP2, newP3, p4)
         }
-        
-        let newP1 = applyInfluence(to: p1, localStart: p0, localEnd: p2, weight: 0.7)
-        let newP2 = applyInfluence(to: p2, localStart: p0, localEnd: p4, weight: 1.0)
-        let newP3 = applyInfluence(to: p3, localStart: p2, localEnd: p4, weight: 0.7)
-        
-        return (p0, newP1, newP2, newP3, p4)
-    }
-
+    
     public func generateMagneticVectorFieldFromVolumeData(
         volumeData: [simd_float4],
         solarRadius: Float,
