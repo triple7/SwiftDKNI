@@ -72,14 +72,18 @@ extension CMEGeometryBuilder {
                     
             let totalVertices = totalParticles * 4
             
-            // --- NEW GEOMETRY PACKING ARCHITECTURE ---
+            // --- GEOMETRY PACKING ARCHITECTURE ---
             var vertexDataArray = [Float](repeating: 0.0, count: totalVertices * 3) // p2 (Apex)
             var normalDataArray = [Float](repeating: 0.0, count: totalVertices * 3) // p1 (Ascending Twist)
             
             var uv0DataArray    = [Float](repeating: 0.0, count: totalVertices * 2) // Quad UVs
-            var uv1DataArray    = [Float](repeating: 0.0, count: totalVertices * 3) // p3 (Descending Twist)
-            var uv2DataArray    = [Float](repeating: 0.0, count: totalVertices * 3) // p0 (Start Root)
-            var uv3DataArray    = [Float](repeating: 0.0, count: totalVertices * 3) // p4 (End Root)
+            
+            // Packing 9 floats (p3, p0, p4) into five float2 UV channels
+            var uv1DataArray    = [Float](repeating: 0.0, count: totalVertices * 2)
+            var uv2DataArray    = [Float](repeating: 0.0, count: totalVertices * 2)
+            var uv3DataArray    = [Float](repeating: 0.0, count: totalVertices * 2)
+            var uv4DataArray    = [Float](repeating: 0.0, count: totalVertices * 2)
+            var uv5DataArray    = [Float](repeating: 0.0, count: totalVertices * 2)
             
             var colorDataArray  = [Float](repeating: 0.0, count: totalVertices * 4) // Particle Params
                     
@@ -93,7 +97,7 @@ extension CMEGeometryBuilder {
                     
             for (lineIdx, line) in validLines.enumerated() {
                 
-                // Premultiply the solar radius on the CPU so the GPU doesn't have to
+                // Premultiply the solar radius on the CPU
                 let p0 = line.p0 * solarRadius
                 let p1 = line.p1 * solarRadius
                 let p2 = line.p2 * solarRadius
@@ -120,21 +124,25 @@ extension CMEGeometryBuilder {
                         normalDataArray[vOffset3 + 1] = p1.y
                         normalDataArray[vOffset3 + 2] = p1.z
                         
-                        uv1DataArray[vOffset3]        = p3.x
-                        uv1DataArray[vOffset3 + 1]    = p3.y
-                        uv1DataArray[vOffset3 + 2]    = p3.z
-                        
-                        uv2DataArray[vOffset3]        = p0.x
-                        uv2DataArray[vOffset3 + 1]    = p0.y
-                        uv2DataArray[vOffset3 + 2]    = p0.z
-                        
-                        uv3DataArray[vOffset3]        = p4.x
-                        uv3DataArray[vOffset3 + 1]    = p4.y
-                        uv3DataArray[vOffset3 + 2]    = p4.z
-                            
                         let vOffset2 = vIdx * 2
                         uv0DataArray[vOffset2]     = quadUVs[j].x
                         uv0DataArray[vOffset2 + 1] = quadUVs[j].y
+                        
+                        // Cross-packing p3, p0, p4 into 2-component arrays
+                        uv1DataArray[vOffset2]     = p3.x
+                        uv1DataArray[vOffset2 + 1] = p3.y
+                        
+                        uv2DataArray[vOffset2]     = p3.z
+                        uv2DataArray[vOffset2 + 1] = p0.x
+                        
+                        uv3DataArray[vOffset2]     = p0.y
+                        uv3DataArray[vOffset2 + 1] = p0.z
+                        
+                        uv4DataArray[vOffset2]     = p4.x
+                        uv4DataArray[vOffset2 + 1] = p4.y
+                        
+                        uv5DataArray[vOffset2]     = p4.z
+                        uv5DataArray[vOffset2 + 1] = 0.0 // Padding
                             
                         let cOffset = vIdx * 4
                         colorDataArray[cOffset]     = speed
@@ -166,21 +174,27 @@ extension CMEGeometryBuilder {
             let uv0Source = SCNGeometrySource(data: uv0Data, semantic: .texcoord, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
 
             let uv1Data = Data(bytes: uv1DataArray, count: uv1DataArray.count * MemoryLayout<Float>.size)
-            let uv1Source = SCNGeometrySource(data: uv1Data, semantic: .texcoord, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
+            let uv1Source = SCNGeometrySource(data: uv1Data, semantic: .texcoord, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
 
             let uv2Data = Data(bytes: uv2DataArray, count: uv2DataArray.count * MemoryLayout<Float>.size)
-            let uv2Source = SCNGeometrySource(data: uv2Data, semantic: .texcoord, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
+            let uv2Source = SCNGeometrySource(data: uv2Data, semantic: .texcoord, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
             
             let uv3Data = Data(bytes: uv3DataArray, count: uv3DataArray.count * MemoryLayout<Float>.size)
-            let uv3Source = SCNGeometrySource(data: uv3Data, semantic: .texcoord, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 3)
+            let uv3Source = SCNGeometrySource(data: uv3Data, semantic: .texcoord, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
+            
+            let uv4Data = Data(bytes: uv4DataArray, count: uv4DataArray.count * MemoryLayout<Float>.size)
+            let uv4Source = SCNGeometrySource(data: uv4Data, semantic: .texcoord, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
+            
+            let uv5Data = Data(bytes: uv5DataArray, count: uv5DataArray.count * MemoryLayout<Float>.size)
+            let uv5Source = SCNGeometrySource(data: uv5Data, semantic: .texcoord, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 2)
                     
             let colorData = Data(bytes: colorDataArray, count: colorDataArray.count * MemoryLayout<Float>.size)
             let colorSource = SCNGeometrySource(data: colorData, semantic: .color, vectorCount: totalVertices, usesFloatComponents: true, componentsPerVector: 4, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0, dataStride: MemoryLayout<Float>.size * 4)
 
             let element = SCNGeometryElement(data: Data(bytes: indices, count: indices.count * MemoryLayout<UInt32>.size), primitiveType: .triangles, primitiveCount: totalParticles * 2, bytesPerIndex: MemoryLayout<UInt32>.size)
 
-            // ORDER IS CRITICAL: SceneKit assigns texcoords[0], [1], [2], [3] based on this exact array placement
-            let geometry = SCNGeometry(sources: [vertexSource, normalSource, uv0Source, uv1Source, uv2Source, uv3Source, colorSource], elements: [element])
+            // The order here natively maps to _geometry.texcoords[0] through [5] in the shader
+            let geometry = SCNGeometry(sources: [vertexSource, normalSource, uv0Source, uv1Source, uv2Source, uv3Source, uv4Source, uv5Source, colorSource], elements: [element])
                     
             let material = SCNMaterial()
             material.lightingModel = .physicallyBased
@@ -254,7 +268,7 @@ extension CMEGeometryBuilder {
             node.renderingOrder = 10
             return node
         }
-    
+
     private func createDummyTexture() -> XImage {
         let size = CGSize(width: 4, height: 4)
 #if os(macOS)
