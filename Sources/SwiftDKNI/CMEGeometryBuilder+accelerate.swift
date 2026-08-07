@@ -67,7 +67,8 @@ extension CMEGeometryBuilder {
                     
             // 2. Generate ALL randoms upfront using Accelerate
             let offsets = generateAcceleratedRandoms(count: totalParticles, min: 0.0, max: 1.0)
-            let speeds  = generateAcceleratedRandoms(count: totalParticles, min: 0.05, max: 0.25)
+        let speedVariances = generateAcceleratedRandoms(count: totalParticles, min: 0.8, max: 1.2)
+        
             let phases  = generateAcceleratedRandoms(count: totalParticles, min: 0.0, max: 1.0)
                     
             let totalVertices = totalParticles * 4
@@ -106,10 +107,21 @@ extension CMEGeometryBuilder {
                 
                 let loopIntensity = min(1.0, abs(line.intensity) / 1000.0)
                 let particlesForThisLine = lineParticleCounts[lineIdx]
-                    
+                
+                // INJECTED PHYSICS: Calculate physical velocity based on magnetic strength
+                // Base speed + a massive boost for high-Gauss active regions
+                let physicalVelocity: Float = 0.4 + (loopIntensity * 2.5)
+
+                // Convert physical velocity into a parametric speed (t per second)
+                // This ensures massive CMEs and tiny loops travel at accurate relative physical speeds
+                let approxLength = Float(particlesForThisLine) / particlesPerUnitLength // Reverse lookup the length
+                let baseLineSpeed = physicalVelocity / max(approxLength, 0.1)
+
                 for _ in 0..<particlesForThisLine {
-                    let speed = speeds[pIdx]
+                    // Apply the variance to the baseline magnetic speed
+                    let speed = baseLineSpeed * speedVariances[pIdx]
                     let offset = offsets[pIdx]
+
                     let phase = phases[pIdx]
                         
                     for j in 0..<4 {
