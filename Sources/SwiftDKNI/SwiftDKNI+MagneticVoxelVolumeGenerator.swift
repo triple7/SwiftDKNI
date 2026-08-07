@@ -12,16 +12,15 @@ import simd
 import Accelerate
 
 struct BrushOffset {
-        let dx: Int
-        let dy: Int
-        let dz: Int
-        let weight: Float
-    }
+    let dx: Int
+    let dy: Int
+    let dz: Int
+    let weight: Float
+}
 
 extension SwiftDKNI {
 
     public func extractMacroRegionalFlows(from lines: [MagneticLoopLine]) -> [RegionalFlow] {
-        // Dictionary to cluster loops into spatial chunks (e.g., quadrants/octants)
         var spatialBuckets: [String: (originSum: simd_float3, dirSum: simd_float3, totalIntensity: Float, count: Float)] = [:]
         
         for line in lines {
@@ -50,19 +49,24 @@ extension SwiftDKNI {
         }
         
         var flows: [RegionalFlow] = []
-        for (_, data) in spatialBuckets {
-            // Only broadcast regions that have enough cumulative intensity to act as a macro-influencer
+        
+        print("\n--- 🌍 GLOBAL TOPOLOGY EXTRACTION ---")
+        for (key, data) in spatialBuckets {
+            // Broadcast regions that have enough cumulative intensity to act as a macro-influencer
             if data.totalIntensity > 250.0 {
                 let center = simd_normalize(data.originSum / data.count)
                 let flowDir = simd_normalize(data.dirSum)
                 flows.append(RegionalFlow(center: center, direction: flowDir, magnitude: data.totalIntensity))
+                
+                print("Sector [\(key)] | Loops: \(Int(data.count)) | Wind Mag: \(String(format: "%.1f", data.totalIntensity)) | Dir: [\(String(format: "%.2f", flowDir.x)), \(String(format: "%.2f", flowDir.y)), \(String(format: "%.2f", flowDir.z))]")
             }
         }
+        print("Extracted \(flows.count) macro-regional flow vectors.")
+        print("---------------------------------------\n")
         
-        print("🌍 Topology: Extracted \(flows.count) macro-regional flow vectors.")
         return flows
     }
-
+    
     /// Helper to sample the CPU-side PFSS volume
     public func sampleMagneticVolume(
         at position: simd_float3,
@@ -119,113 +123,127 @@ extension SwiftDKNI {
     }
     
     public func applyMagneticInfluenceToSpline(
-            p0: simd_float3,
-            p1: simd_float3,
-            p2: simd_float3,
-            p3: simd_float3,
-            p4: simd_float3,
-            isOpen: Bool,
-            pfssVolume: [simd_float4],
-            regionalFlows: [RegionalFlow], // 🚨 The new global topology parameter
-            solarRadius: Float
-        ) -> (simd_float3, simd_float3, simd_float3, simd_float3, simd_float3) {
+        p0: simd_float3,
+        p1: simd_float3,
+        p2: simd_float3,
+        p3: simd_float3,
+        p4: simd_float3,
+        isOpen: Bool,
+        pfssVolume: [simd_float4],
+        regionalFlows: [RegionalFlow],
+        solarRadius: Float
+    ) -> (simd_float3, simd_float3, simd_float3, simd_float3, simd_float3) {
+        
+        func applyInfluence(to point: simd_float3, localStart: simd_float3, localEnd: simd_float3, weight: Float) -> simd_float3 {
+            let ambientField = sampleMagneticVolume(
+                at: point,
+                pfssVolume: pfssVolume,
+                solarRadius: solarRadius
+            )
             
-            func applyInfluence(to point: simd_float3, localStart: simd_float3, localEnd: simd_float3, weight: Float) -> simd_float3 {
-                let ambientField = sampleMagneticVolume(
-                    at: point,
-                    pfssVolume: pfssVolume,
-                    solarRadius: solarRadius
-                )
+            var flowVector = simd_make_float3(ambientField.x, ambientField.y, ambientField.z)
+            let rawInfluence = ambientField.w
+            
+            // --- 🌍 GLOBAL TOPOLOGY: Add the macro-winds from other regions ---
+            var macroWind = simd_float3(0, 0, 0)
+            for flow in regionalFlows {
+                let rVec = flow.center - point
+                let distSq = simd_length_squared(rVec)
                 
-                var flowVector = simd_make_float3(ambientField.x, ambientField.y, ambientField.z)
-                let rawInfluence = ambientField.w
-                
-                // --- 🌍 GLOBAL TOPOLOGY: Add the macro-winds from other regions ---
-                var macroWind = simd_float3(0, 0, 0)
-                for flow in regionalFlows {
-                    let rVec = flow.center - point
-                    let distSq = simd_length_squared(rVec)
-                    
-                    // Prevent self-amplification; only allow distant regions to pull
-                    if distSq > 0.15 && distSq < 4.0 {
-                        // Magnetic fields follow an inverse-cube falloff over distance
-                        let falloff = 1.0 / (distSq * sqrt(distSq) + 0.001)
-                        macroWind += flow.direction * (flow.magnitude * 0.0005 * falloff)
-                    }
-                }
-                
-                // Blend the local grid volume with the overarching global wind
-                if simd_length(macroWind) > 0.001 {
-                    flowVector = normalize(flowVector + macroWind)
-                } else if simd_length(flowVector) > 0.001 {
-                    flowVector = normalize(flowVector)
-                } else {
-                    flowVector = simd_float3(0, 1, 0) // Failsafe up-vector
-                }
-                // ------------------------------------------------------------------
-                
-                // 1. NON-LINEAR BOOST: Aggressively lift quiet magnetogram regions out of the noise floor.
-                let boostedInfluence = max(0.15, pow(rawInfluence, 0.4))
-                
-                // 2. HEIGHT LEVERAGE: The higher the point, the easier it is for the ambient field to bend it.
-                let heightFromCenter = simd_length(point)
-                let heightLeverage = max(1.0, heightFromCenter / solarRadius)
-                
-                if isOpen {
-                    // OPEN SPLINES: Escape trajectory dominated by the flow vector
-                    let escapePush = flowVector * (solarRadius * 0.6 * boostedInfluence * weight * heightLeverage)
-                    return point + escapePush
-                    
-                } else {
-                    // CLOSED SPLINES: Regional Conformation + Synthetic Micro-Braiding
-                    
-                    let regionalPush = flowVector * (solarRadius * 0.35 * boostedInfluence * weight * heightLeverage)
-                    
-                    // 3. DETERMINISTIC SPATIAL HASH: Generate a stable pseudo-random offset based on the 3D coordinate.
-                    // This guarantees that even in 100% dead gray zones, the spline is mathematically forced out of a flat 2D plane.
-                    let dotProduct = point.x * 12.9898 + point.y * 78.233 + point.z * 37.719
-                    let sinVal = sin(dotProduct) * 43758.5453
-                    let spatialHash = sinVal - floor(sinVal)
-                    let noiseOffset = (Float(spatialHash) - 0.5) * 2.0 // Range: -1.0 to 1.0
-                    
-                    let splineDirection = normalize(localEnd - localStart)
-                    var twistAxis = simd_cross(splineDirection, flowVector)
-                    
-                    // Inject the spatial noise into the fallback surface normal so quiet loops twist unpredictably
-                    if simd_length(twistAxis) < 0.001 {
-                        let surfaceNormal = normalize(point)
-                        let chaoticNormal = normalize(surfaceNormal + simd_float3(noiseOffset * 0.6))
-                        twistAxis = simd_cross(splineDirection, chaoticNormal)
-                    }
-                    
-                    var twistPush = simd_float3(0, 0, 0)
-                    if simd_length(twistAxis) > 0.001 {
-                        let twistMagnitude = solarRadius * 0.25 * boostedInfluence * weight * heightLeverage
-                        // Modulate the final twist with the noise offset for organic irregularity
-                        twistPush = normalize(twistAxis) * twistMagnitude * (1.0 + (noiseOffset * 0.4))
-                    }
-                    
-                    return point + regionalPush + twistPush
+                // Prevent self-amplification; only allow distant regions to pull
+                if distSq > 0.15 && distSq < 4.0 {
+                    let falloff = 1.0 / (distSq * sqrt(distSq) + 0.001)
+                    macroWind += flow.direction * (flow.magnitude * 0.0005 * falloff)
                 }
             }
             
-            // Ascending Quarter Point (Evaluates local tangent)
-            let newP1 = applyInfluence(to: p1, localStart: p0, localEnd: p2, weight: 0.7)
+            if simd_length(macroWind) > 0.001 {
+                flowVector = normalize(flowVector + macroWind)
+            } else if simd_length(flowVector) > 0.001 {
+                flowVector = normalize(flowVector)
+            } else {
+                flowVector = simd_float3(0, 1, 0)
+            }
             
-            // Apex Point (Evaluates overarching tangent)
-            let newP2 = applyInfluence(to: p2, localStart: p0, localEnd: p4, weight: 1.0)
+            // NON-LINEAR BOOST: Lift quiet regions with a hard limit to prevent scaling chaos
+            let boostedInfluence = min(1.5, max(0.15, pow(rawInfluence, 0.4)))
+            let surfaceNormal = normalize(point)
             
-            // Descending Quarter Point (Evaluates local tangent)
-            let newP3 = applyInfluence(to: p3, localStart: p2, localEnd: p4, weight: 0.7)
-            
-            return (p0, newP1, newP2, newP3, p4)
+            if isOpen {
+                // OPEN SPLINES: Escape trajectory dominated by the radial flow
+                let heightFromCenter = simd_length(point)
+                let heightLeverage = max(1.0, heightFromCenter / solarRadius)
+                let escapePush = flowVector * (solarRadius * 0.6 * boostedInfluence * weight * heightLeverage)
+                
+                return point + escapePush
+                
+            } else {
+                // CLOSED SPLINES: Tangential Conformation + Controlled Radial Bulge
+                
+                let radialComponent = dot(flowVector, surfaceNormal)
+                let tangentialFlow = flowVector - (radialComponent * surfaceNormal)
+                
+                var sweepDirection = simd_float3(0, 1, 0)
+                if simd_length(tangentialFlow) > 0.001 {
+                    sweepDirection = normalize(tangentialFlow)
+                } else {
+                    sweepDirection = normalize(simd_cross(surfaceNormal, simd_float3(0, 1, 0)))
+                }
+                
+                // 1. The horizontal sweep across the curvature of the sun
+                let tangentialPush = sweepDirection * (solarRadius * 0.35 * boostedInfluence * weight)
+                
+                // 2. 🚨 THE CONTROLLED RADIAL BULGE
+                // Use the unclamped `rawInfluence` to detect peak active zones.
+                let activityThreshold: Float = 15.0 // Base threshold to ignore the quiet sun
+                let radialBulgeFactor = max(0.0, rawInfluence - activityThreshold)
+                
+                // Cap the outward explosion so it doesn't break the camera view.
+                // A cap of 0.4 means the loop can bulge outward a max of 40% of the solar radius.
+                let clampedBulge = min(radialBulgeFactor * 0.015, 0.4)
+                
+                // Only push outward if the flow vector is actually blowing away from the surface
+                let outwardLift = max(0.0, radialComponent)
+                let radialPush = surfaceNormal * (outwardLift * clampedBulge * solarRadius * weight)
+                
+                let regionalPush = tangentialPush + radialPush
+                
+                // 3. SPATIAL HASH (Micro-Braiding)
+                let dotProduct = point.x * 12.9898 + point.y * 78.233 + point.z * 37.719
+                let sinVal = sin(dotProduct) * 43758.5453
+                let spatialHash = sinVal - floor(sinVal)
+                let noiseOffset = (Float(spatialHash) - 0.5) * 2.0
+                
+                let splineDirection = normalize(localEnd - localStart)
+                var twistAxis = simd_cross(splineDirection, flowVector)
+                
+                if simd_length(twistAxis) < 0.001 {
+                    let chaoticNormal = normalize(surfaceNormal + simd_float3(noiseOffset * 0.6))
+                    twistAxis = simd_cross(splineDirection, chaoticNormal)
+                }
+                
+                var twistPush = simd_float3(0, 0, 0)
+                if simd_length(twistAxis) > 0.001 {
+                    let twistMagnitude = solarRadius * 0.15 * boostedInfluence * weight
+                    twistPush = normalize(twistAxis) * twistMagnitude * (1.0 + (noiseOffset * 0.4))
+                }
+                
+                return point + regionalPush + twistPush
+            }
         }
+        
+        let newP1 = applyInfluence(to: p1, localStart: p0, localEnd: p2, weight: 0.7)
+        let newP2 = applyInfluence(to: p2, localStart: p0, localEnd: p4, weight: 1.0)
+        let newP3 = applyInfluence(to: p3, localStart: p2, localEnd: p4, weight: 0.7)
+        
+        return (p0, newP1, newP2, newP3, p4)
+    }
 
     public func generateMagneticVectorFieldFromVolumeData(
         volumeData: [simd_float4],
         solarRadius: Float,
         resolution: Int
-    ) -> SCNNode{
+    ) -> SCNNode {
         
         let gridBounds = solarRadius * 3.0
         let step = (2.0 * gridBounds) / Float(resolution - 1)
@@ -312,15 +330,14 @@ extension SwiftDKNI {
             let vectorMaterial = SCNMaterial()
             vectorMaterial.lightingModel = .constant // Skip lighting math
             // SceneKit needs a white diffuse base to multiply the vertex colors against
-            // Use NSColor.white for macOS or UIColor.white for iOS
             vectorMaterial.blendMode = .alpha
             // 2. Prevent transparent lines from occluding (blocking) lines behind them
             vectorMaterial.writesToDepthBuffer = false
             
 #if os(macOS)
-vectorMaterial.diffuse.contents = NSColor.white
+            vectorMaterial.diffuse.contents = NSColor.white
 #else
-vectorMaterial.diffuse.contents = UIColor.white
+            vectorMaterial.diffuse.contents = UIColor.white
 #endif
             vectorGeometry.materials = [vectorMaterial]
             
@@ -329,7 +346,7 @@ vectorMaterial.diffuse.contents = UIColor.white
         }
         return SCNNode()
     }
-    
+
     public func generateMagneticVolumeTexture(
         device: MTLDevice,
         lines: [MagneticLoopLine],
@@ -711,4 +728,3 @@ vectorMaterial.diffuse.contents = UIColor.white
         return (finalData, texture)
     }
 }
-
