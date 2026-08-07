@@ -10,7 +10,7 @@ import Foundation
 final public class DONKIService: Sendable {
     
     /// Fetches CME events and returns a list of averaged geometries.
-    func fetchAndAverageCMEData(request: CMERequest, cachedIfExists: Bool = true) async throws -> [AveragedCMEData] {
+    func fetchAndAverageCMEData(request: CMERequest, cachedIfExists: Bool = true) async throws -> (events: [AveragedCMEData], actualStartTime: String?, actualEndTime: String?) {
         
         let fileManager = FileManager.default
         let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -80,6 +80,13 @@ final public class DONKIService: Sendable {
             throw CMEFetcherError.decodingFailed(error)
         }
         
+        // --- NEW: Quick loop to determine actual bounds from the data ---
+        // ISO-formatted dates can be safely sorted lexicographically
+        let sortedStartTimes = events.map { $0.startTime }.sorted()
+        let actualStartTime = sortedStartTimes.first
+        let actualEndTime = sortedStartTimes.last
+        // ----------------------------------------------------------------
+        
         // 4. Process and Average the Data
         print("SwiftDNKI: found \(events.count) events")
         var processedEvents: [AveragedCMEData] = []
@@ -130,6 +137,6 @@ final public class DONKIService: Sendable {
             }
         }
         
-        return processedEvents
+        return (events: processedEvents, actualStartTime: actualStartTime, actualEndTime: actualEndTime)
     }
 }

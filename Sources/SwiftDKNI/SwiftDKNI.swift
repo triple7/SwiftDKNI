@@ -232,8 +232,17 @@ extension SwiftDKNI {
             let request = CMERequest(startDate: startTime, endDate: endTime, apiKey: self.apiKey)
             
             var events: [AveragedCMEData] = []
+            var actualSimulationStart = startTime
+            var actualSimulationEnd = endTime
+
             do {
-                events = try await donkiService.fetchAndAverageCMEData(request: request, cachedIfExists: cachedIfExists)
+                let result = try await donkiService.fetchAndAverageCMEData(request: request, cachedIfExists: cachedIfExists)
+                events = result.events
+                
+                // Override the query parameters with the actual bounds from the cache
+                // .prefix(10) strips the 'T02:09Z' off the end so it cleanly matches "yyyy-MM-dd"
+                if let realStart = result.actualStartTime { actualSimulationStart = String(realStart.prefix(10)) }
+                if let realEnd = result.actualEndTime { actualSimulationEnd = String(realEnd.prefix(10)) }
             } catch {
                 print("Warning: CME Generation Failed (\(error)). Proceeding with base sun & magnetic loops only.")
             }
@@ -246,12 +255,12 @@ extension SwiftDKNI {
             queryFormatter.dateFormat = "yyyy-MM-dd"
             queryFormatter.timeZone = TimeZone(secondsFromGMT: 0)
             
-            let simulationStart = queryFormatter.date(from: startTime) ?? Date()
-            let simulationEnd = queryFormatter.date(from: endTime) ?? simulationStart.addingTimeInterval(86400 * 30)
-            
+            let simulationStart = queryFormatter.date(from: actualSimulationStart) ?? Date()
+            // Cheesy workaround for the simulation end; currently the realEnd computation above cuts off the time, so adding a day to the end to get all events back
+            let simulationEnd = queryFormatter.date(from: actualSimulationEnd)?.addingTimeInterval(86400) ?? simulationStart.addingTimeInterval(86400 * 30)
             // Calculate the timeline compression ratio (Maps the entire query window into a 60-second visual loop)
             let totalRealSeconds = simulationEnd.timeIntervalSince(simulationStart)
-            let visualLoopDuration: Double = 60.0
+            let visualLoopDuration: Double = 10.0
             let compressionRatio = visualLoopDuration / max(1.0, totalRealSeconds)
             
             let donkiFormatter = DateFormatter()
@@ -461,21 +470,24 @@ extension SwiftDKNI {
                         max: SCNVector3(50.0, 50.0, 50.0)
                     )
                     if let material = cmeNode.geometry?.materials.first {
-                        material.setValue(NSNumber(value: Float(0.0)), forKey: "u_ignitionTime") // DIAGNOSTIC OVERRIDE
+                        let scnLoopTimeCME = Float(visualLoopDuration)
+                        let scnIgnitionTime = safeIgnitionTime.truncatingRemainder(dividingBy: scnLoopTimeCME) // Just makes sure that ignition time is not out of the loop range
                         
+                        // event
+                        material.setValue(NSNumber(value: scnIgnitionTime), forKey: "u_ignitionTime")
+                        material.setValue(NSNumber(value: scnLoopTimeCME), forKey: "u_loopTime")
+//                        material.setValue(NSNumber(value: Float(CACurrentMediaTime())), forKey: "u_scnFrameTimeSnapshot")
+                        material.setValue(NSNumber(value: Float(0.0)), forKey: "u_scnFrameTimeSnapshot") // BUGGED, above code doesn't work and we need to match scn_frame.time
+
                         // 🚨 BIND IMMEDIATELY: Ensure the timeline variables are never left unbound
-                        material.setValue(NSNumber(value: Float(5.0)), forKey: "u_globalTime")
-                        
+                        material.setValue(NSNumber(value: Float(-1.0)), forKey: "u_globalTime") // negative value to let the shader drive the loop times
                         material.setValue(NSNumber(value: sRadius), forKey: "u_solarRadius")
-                        material.setValue(NSNumber(value: Float(2.0)), forKey: "u_thickness")
-
+                        material.setValue(NSNumber(value: Float(0.3)), forKey: "u_thickness")
                         
-                        // Scale the raw km/s into SceneKit units so they don't instantly fly off-screen
-                        let rawSpeed = Float(event.speed) ?? Float(500.0)
-                        let visualSpeedScale: Float = 0.0004
-                        let scaledSpeed = rawSpeed * visualSpeedScale
-
-                        material.setValue(NSNumber(value: scaledSpeed), forKey: "u_speed")
+                        // Scaling of the event speed into scn units is done inside the metal geometry shader
+                        let rawSpeed = Float(event.speed) ?? Float(400.0) // 400 is the middle of the range on sampled
+                        material.setValue(NSNumber(value: Float(1000.0)), forKey: "u_ejectionMultiplier")
+                        material.setValue(NSNumber(value: rawSpeed), forKey: "u_speed")
                         material.setValue(NSNumber(value: Float(event.halfAngle) ?? Float(20.0)), forKey: "u_halfAngle")
                         
                         if let vp = sharedVolumeProperty {
@@ -493,15 +505,15 @@ extension SwiftDKNI {
             // 🚨 FIX: Pass the securely hoisted topological image, eliminating the race condition
             try await applySolarSurfaceMaterials(to: sphere, topologicalImage: fetchedTopologicalImage, cachedIfExists: cachedIfExists)
             
-            // --- STATIC TIMELINE DEBUGGER ---
-            let debugGlobalTime: Float = 0.0
-            print("⏱️ Diagnostic Override: Forcing global clock to \(debugGlobalTime)s for all CMEs.")
-            
-            coronalSurfaceNode.childNodes.forEach { node in
-                if let material = node.geometry?.materials.first, material.value(forKey: "u_ignitionTime") != nil {
-                    material.setValue(NSNumber(value: debugGlobalTime), forKey: "u_globalTime")
-                }
-            }
+//            // --- STATIC TIMELINE DEBUGGER ---
+//            let debugGlobalTime: Float = 5.0
+//            print("⏱️ Diagnostic Override: Forcing global clock to \(debugGlobalTime)s for all CMEs.")
+//            
+//            coronalSurfaceNode.childNodes.forEach { node in
+//                if let material = node.geometry?.materials.first, material.value(forKey: "u_ignitionTime") != nil {
+//                    material.setValue(NSNumber(value: debugGlobalTime), forKey: "u_globalTime")
+//                }
+//            }
             return coronalSurfaceNode
         }
 
