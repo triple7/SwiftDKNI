@@ -434,7 +434,7 @@ public final class MagnetogramModeler: @unchecked Sendable {
                 let bField = computeMagneticField(at: currentPos, regions: regions)
                 
                 let length = simd_length(bField)
-                if length < 0.00001 || length.isNaN { break }
+                if length < 0.00001 || length.isNaN { break } // Early break causes short path arrays
                 
                 let direction = bField / length
                 currentPos += direction * stepSize
@@ -469,27 +469,38 @@ public final class MagnetogramModeler: @unchecked Sendable {
             
             if isOpen {
                 // OPEN TRAJECTORY (CME)
-                // The spline should escape outward, never closing to the surface.
                 let count = path.count
-                p_1 = path[count / 4]
-                p_2 = path[count / 2]
-                p_3 = path[(count * 3) / 4]
                 
-                // Failsafe: If it ran out of steps before truly escaping the volume,
-                // explicitly project p_4 outward so the CME always blows into the void.
-                if simd_length(p_4) < 6.0 {
-                    let escapeDir = simd_normalize(p_4 - p_3)
-                    p_4 = p_4 + (escapeDir * (6.0 - simd_length(p_4)))
+                // 🚨 ANTI-NAN FIX 1: If the path died instantly in a dead zone, synthesize a forced escape
+                if count < 4 {
+                    let outDir = simd_length(p_0) > 0.001 ? simd_normalize(p_0) : simd_float3(0, 1, 0)
+                    p_1 = p_0 + outDir * 1.0
+                    p_2 = p_0 + outDir * 2.0
+                    p_3 = p_0 + outDir * 4.0
+                    p_4 = p_0 + outDir * 6.0
+                } else {
+                    p_1 = path[count / 4]
+                    p_2 = path[count / 2]
+                    p_3 = path[(count * 3) / 4]
                     
-                    // Adjust p_3 so it transitions smoothly into the new projected p_4
-                    p_3 = simd_mix(p_2, p_4, simd_float3(repeating: 0.5))
+                    // 🚨 ANTI-NAN FIX 2: Ensure physical distance before normalizing the escape vector
+                    let escapeVector = p_4 - p_3
+                    if simd_length(escapeVector) < 0.001 {
+                        let outward = simd_length(p_4) > 0.001 ? simd_normalize(p_4) : simd_float3(0, 1, 0)
+                        p_4 += outward * 0.5
+                    }
+                    
+                    // Project premature loop death into the void
+                    if simd_length(p_4) < 6.0 {
+                        let escapeDir = simd_normalize(p_4 - p_3)
+                        p_4 = p_4 + (escapeDir * (6.0 - simd_length(p_4)))
+                        p_3 = simd_mix(p_2, p_4, simd_float3(repeating: 0.5))
+                    }
                 }
-                
                 maxRadius = simd_length(p_4)
                 
             } else {
                 // CLOSED TRAJECTORY (Coronal Loop)
-                // The spline arches and returns to the surface.
                 p_2 = path[apexIndex]
                 p_1 = path[max(0, apexIndex / 2)]
                 let remainderIdx = apexIndex + (path.count - 1 - apexIndex) / 2
@@ -497,10 +508,9 @@ public final class MagnetogramModeler: @unchecked Sendable {
             }
             
             // --- APPLY REGIONAL HELICITY (TWIST) TO B-SPLINE CONTROL POINTS ---
-            // A helper closure to apply the magnetic twist vector to a specific control point.
             let applyTwist = { (point: inout simd_float3) in
                 var norm = simd_normalize(point)
-                if norm.x.isNaN { norm = simd_normalize(p_0) } // Safety catch
+                if norm.x.isNaN { norm = simd_normalize(p_0) }
                 
                 let up = simd_float3(0, 1, 0)
                 var tangent = simd_cross(norm, up)
@@ -509,8 +519,6 @@ public final class MagnetogramModeler: @unchecked Sendable {
                 tangent = simd_normalize(tangent)
                 
                 let binormal = simd_normalize(simd_cross(tangent, norm))
-                
-                // The lean scales dynamically with the height of the point so roots stay anchored
                 let leanStrength: Float = 0.15 * simd_length(point)
                 
                 let safeTwistX = twist.x.isNaN ? 0.0 : twist.x
@@ -520,19 +528,16 @@ public final class MagnetogramModeler: @unchecked Sendable {
                 point += directionalOffset
             }
             
-            // Apply the twist to all three dynamic bezier points
             applyTwist(&p_1)
             applyTwist(&p_2)
             applyTwist(&p_3)
             
             // --- ANTI-NAN GEOMETRY FAIL-SAFE ---
-            // Force minimum spatial separation to guarantee the Metal derivative never normalizes a zero-vector
             if simd_distance(p_1, p_0) < 0.05 { p_1 = p_0 + (simd_normalize(p_0) * 0.05) }
             if simd_distance(p_2, p_1) < 0.05 { p_2 = p_1 + (simd_normalize(p_1) * 0.05) }
             if simd_distance(p_3, p_2) < 0.05 { p_3 = p_2 + (simd_normalize(p_2) * 0.05) }
             if simd_distance(p_4, p_3) < 0.05 { p_4 = p_3 + (simd_normalize(p_3) * 0.05) }
             
-            // 🚨 THE NaN TRAP 🚨
             let hasNaN = p_0.x.isNaN || p_0.y.isNaN || p_0.z.isNaN ||
                          p_1.x.isNaN || p_1.y.isNaN || p_1.z.isNaN ||
                          p_2.x.isNaN || p_2.y.isNaN || p_2.z.isNaN ||
@@ -544,11 +549,8 @@ public final class MagnetogramModeler: @unchecked Sendable {
                 print("Start Point: \(p_0)")
                 print("Final p_2 (Apex): \(p_2)")
                 print("Final p_4 (End): \(p_4)")
-                print("Twist vector: \(twist)")
-                print("Max Radius: \(maxRadius)")
                 print("---------------------------------")
                 
-                // Return a safe dummy line slightly above the surface so SceneKit doesn't crash
                 let safe0 = simd_float3(0, 1.05, 0)
                 let safe1 = simd_float3(0, 1.10, 0)
                 let safe2 = simd_float3(0, 1.15, 0)

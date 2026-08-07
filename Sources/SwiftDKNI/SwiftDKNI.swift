@@ -40,6 +40,8 @@ final public class SwiftDKNI: Sendable {
 // MARK: - Surface Generation Extension
 extension SwiftDKNI {
 
+    // MARK: - Scene Rendering Methods
+
     private func applySolarSurfaceMaterials(
             to sphere: SCNSphere,
             topologicalImage: Any?, // Accept the pre-fetched image directly
@@ -365,13 +367,16 @@ extension SwiftDKNI {
                     let magneticLoopStart = CACurrentMediaTime()
                     var magneticLines = magnetogramModeler.calculateMagneticLoops(from: magData)
                     
+                    // 🚨 GLOBAL TOPOLOGY: Extract the macro-winds from the splines BEFORE we deform them
+                    let regionalFlows = self.extractMacroRegionalFlows(from: magneticLines)
+                    
                     // Intercept splines on CPU to apply ambient field deformation & Solar Rotation
                     magneticLines = magneticLines.map { line in
                         // 🚨 NEW: Warp the root points to match the GPU's active region bulging
                         let warpedP0 = applyTopologicalWarp(line.p0)
                         let warpedP4 = applyTopologicalWarp(line.p4)
                         
-                        // A. Bend the apex based on the ambient voxel vectors
+                        // A. Bend the apex based on the ambient voxel vectors AND the global macro-winds
                         var (newP0, newP1, newP2, newP3, newP4) = self.applyMagneticInfluenceToSpline(
                             p0: warpedP0,
                             p1: line.p1,
@@ -380,9 +385,10 @@ extension SwiftDKNI {
                             p4: warpedP4,
                             isOpen: line.isOpen,
                             pfssVolume: ambientPFSSArray,
+                            regionalFlows: regionalFlows,
                             solarRadius: sRadius
                         )
-                        
+
                         // B. Apply the Archimedean Parker Spiral twisting force based on solar rotation
                         if line.isOpen {
                             newP1 = self.applySolarRotationShift(point: newP1, solarRadius: sRadius)
@@ -413,18 +419,20 @@ extension SwiftDKNI {
                         resolution: magneticResolution
                     )
                     sharedMagneticVolume = volumeResult.texture
+                    
                     let magneticVectorField = self.generateMagneticVectorFieldFromVolumeData(
                         volumeData: volumeResult.volumeData,
                         solarRadius: sRadius,
-                        resolution: magneticResolution)
+                        resolution: magneticResolution
+                    )
                     
                     magneticVectorField.opacity = 0.2
                     
                     // STAGE 4: VISUAL GEOMETRY
                     let globalMagneticNode = geometryBuilder.createCoronalSurface(from: magneticLines, solarRadius: sRadius)
                     
-                    coronalSurfaceNode.addChildNode(magneticVectorField)
-    //                coronalSurfaceNode.addChildNode(globalMagneticNode)
+//                    coronalSurfaceNode.addChildNode(magneticVectorField)
+                    coronalSurfaceNode.addChildNode(globalMagneticNode)
                 }
                 
                 var firstIgnitionTime: Float? = nil
@@ -508,7 +516,7 @@ extension SwiftDKNI {
     //            // --- STATIC TIMELINE DEBUGGER ---
     //            let debugGlobalTime: Float = 5.0
     //            print("⏱️ Diagnostic Override: Forcing global clock to \(debugGlobalTime)s for all CMEs.")
-    //            
+    //
     //            coronalSurfaceNode.childNodes.forEach { node in
     //                if let material = node.geometry?.materials.first, material.value(forKey: "u_ignitionTime") != nil {
     //                    material.setValue(NSNumber(value: debugGlobalTime), forKey: "u_globalTime")
