@@ -522,6 +522,7 @@ extension SwiftDKNI {
     //                    material.setValue(NSNumber(value: debugGlobalTime), forKey: "u_globalTime")
     //                }
     //            }
+
                 return coronalSurfaceNode
             }
 
