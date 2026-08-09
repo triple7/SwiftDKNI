@@ -11,13 +11,16 @@ import simd
 public struct StellarConfig: Codable {
     public var energyTunnelConfig: EnergyTunnelConfig
     public var cmeConfig: CMEConfig
+    public var thermalConfig:StarThermalConfig
     
     public init(
         energyTunnelConfig: EnergyTunnelConfig = EnergyTunnelConfig(),
-        cmeConfig: CMEConfig = CMEConfig()
+        cmeConfig: CMEConfig = CMEConfig(),
+        thermalConfig:StarThermalConfig = StarThermalConfig()
     ) {
         self.energyTunnelConfig = energyTunnelConfig
         self.cmeConfig = cmeConfig
+        self.thermalConfig = thermalConfig
     }
     
     // MARK: - Mutating Setters
@@ -28,6 +31,10 @@ public struct StellarConfig: Codable {
     
     public mutating func setCMEConfig(_ value: CMEConfig) {
         self.cmeConfig = value
+    }
+
+    public mutating func setThermalConfig(_ value: StarThermalConfig) {
+        self.thermalConfig = value
     }
 }
 
@@ -205,3 +212,67 @@ public struct CMEConfig: Codable {
         self.defaultHalfAngle = value
     }
 }
+
+
+import SceneKit
+
+import SceneKit
+
+public struct StarThermalConfig: Codable {
+    public var warpIntensity: Float = 1.0
+    public var opacity: Float = 0.05
+    public var color: SCNVector3 = SCNVector3(1.0, 0.85, 0.1) // Intense Golden Yellow
+    public var directionMultiplier: Float = 1.0 // Controls the speed/influence of the voxel direction
+    
+    public init() {}
+    
+    // MARK: - Mutating Setters
+    
+    public mutating func setWarpIntensity(_ value: Float) {
+        self.warpIntensity = value
+    }
+    
+    public mutating func setOpacity(_ value: Float) {
+        self.opacity = value
+    }
+    
+    public mutating func setColor(_ value: SCNVector3) {
+        self.color = value
+    }
+    
+    public mutating func setDirectionMultiplier(_ value: Float) {
+        self.directionMultiplier = value
+    }
+    
+    // MARK: - Codable Conformance
+    
+    enum CodingKeys: String, CodingKey {
+        case warpIntensity, opacity, color, directionMultiplier
+    }
+    
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        warpIntensity = try container.decode(Float.self, forKey: .warpIntensity)
+        opacity = try container.decode(Float.self, forKey: .opacity)
+        
+        // Use decodeIfPresent for backwards compatibility with existing config files
+        directionMultiplier = try container.decodeIfPresent(Float.self, forKey: .directionMultiplier) ?? 1.0
+        
+        // Decode SCNVector3 as a Float array
+        let colorArray = try container.decode([Float].self, forKey: .color)
+        color = SCNVector3(colorArray[0], colorArray[1], colorArray[2])
+    }
+    
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        
+        try container.encode(warpIntensity, forKey: .warpIntensity)
+        try container.encode(opacity, forKey: .opacity)
+        try container.encode(directionMultiplier, forKey: .directionMultiplier)
+        
+        // Encode SCNVector3 as a Float array for safe serialization
+        try container.encode([Float(color.x), Float(color.y), Float(color.z)], forKey: .color)
+    }
+}
+
