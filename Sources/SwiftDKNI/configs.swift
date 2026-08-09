@@ -8,8 +8,6 @@
 import SceneKit
 import simd
 
-import SceneKit
-
 public struct StellarConfig: Codable {
     public var energyTunnelConfig: EnergyTunnelConfig
     public var cmeConfig: CMEConfig
@@ -24,6 +22,7 @@ public struct StellarConfig: Codable {
 }
 
 public struct EnergyTunnelConfig: Codable {
+    public var particlesPerUnitLength: Float = 15.0
     public var tunnelRadiusBase: Float = 0.005
     public var particleBaseSize: Float = 0.08
     public var particleVariance: Float = 0.02
@@ -43,7 +42,7 @@ public struct EnergyTunnelConfig: Codable {
     // MARK: - Codable Conformance for SCNVector3
     
     enum CodingKeys: String, CodingKey {
-        case tunnelRadiusBase, particleBaseSize, particleVariance
+        case particlesPerUnitLength, tunnelRadiusBase, particleBaseSize, particleVariance
         case warpIntensity, boilSpeed, twinkleSpeed
         case coreColor, midColor, edgeColor
         case hdrMultiplier
@@ -52,6 +51,7 @@ public struct EnergyTunnelConfig: Codable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         
+        particlesPerUnitLength = try container.decode(Float.self, forKey: .particlesPerUnitLength)
         tunnelRadiusBase = try container.decode(Float.self, forKey: .tunnelRadiusBase)
         particleBaseSize = try container.decode(Float.self, forKey: .particleBaseSize)
         particleVariance = try container.decode(Float.self, forKey: .particleVariance)
@@ -75,7 +75,7 @@ public struct EnergyTunnelConfig: Codable {
     
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        
+        try container.encode(particlesPerUnitLength, forKey: .particlesPerUnitLength)
         try container.encode(tunnelRadiusBase, forKey: .tunnelRadiusBase)
         try container.encode(particleBaseSize, forKey: .particleBaseSize)
         try container.encode(particleVariance, forKey: .particleVariance)
@@ -100,6 +100,7 @@ public struct CMEConfig: Codable {
     public var scnFrameTimeSnapshot: Float = 0.0
     
     // Physics and Deformation
+    public var pointCount: Int = 1000
     public var warpIntensity: Float = 0.025
     public var thickness: Float = 0.3
     public var ejectionMultiplier: Float = 1000.0

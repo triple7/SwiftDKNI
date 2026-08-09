@@ -46,7 +46,6 @@ extension CMEGeometryBuilder {
     
     public func buildAcceleratedEnergyTunnels(
         from lines: [MagneticLoopLine],
-        particlesPerUnitLength: Float = 15.0,
         solarRadius: Float,
         config: EnergyTunnelConfig = EnergyTunnelConfig()
     ) -> SCNNode {
@@ -63,7 +62,7 @@ extension CMEGeometryBuilder {
                                simd_distance(line.p2, line.p3) +
                                simd_distance(line.p3, line.p4)
             
-            let count = max(10, Int(approxLength * particlesPerUnitLength))
+            let count = max(10, Int(approxLength * config.particlesPerUnitLength))
             lineParticleCounts.append(count)
             totalParticles += count
         }
@@ -116,7 +115,7 @@ extension CMEGeometryBuilder {
             let physicalVelocity: Float = 0.4 + (loopIntensity * 2.5)
 
             // Convert physical velocity into a parametric speed (t per second)
-            let approxLength = Float(particlesForThisLine) / particlesPerUnitLength
+            let approxLength = Float(particlesForThisLine) / config.particlesPerUnitLength
             let baseLineSpeed = physicalVelocity / max(approxLength, 0.1)
 
             for _ in 0..<particlesForThisLine {

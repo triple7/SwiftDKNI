@@ -475,7 +475,7 @@ extension SwiftDKNI {
                 let cmeNode = try! geometryBuilder.createCoronalEjectionNode(
                     for: event,
                     openLines: openMagneticLines,
-                    pointCount: 1000,
+                    pointCount: cMEConfig.pointCount,
                     solarRadius: Float(sphere.radius))
 
                 //  ANTI-CULL OVERRIDE: Force a massive bounding box so SceneKit never deletes it
