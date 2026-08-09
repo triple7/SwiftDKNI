@@ -18,7 +18,12 @@ extension SwiftDKNI {
         voxelCube: MTLTexture,
         config: StarThermalConfig = StarThermalConfig()
     ) -> SCNNode {
-        print("generateThermalAtmosphericNode: thermal radius \(thermalRadius)")
+        
+        print("--- THERMAL NODE DEBUG ---")
+        print("Radius: \(radius), Thermal Multiplier: \(thermalRadius)")
+        print("Surface Texture Size: \(surfaceTexture.width)x\(surfaceTexture.height)")
+        print("Voxel Cube Size: \(voxelCube.width)x\(voxelCube.height)x\(voxelCube.depth)")
+        
         let thermalShellRadius = radius * thermalRadius
         let thermalSphere = SCNSphere(radius: CGFloat(thermalShellRadius))
         thermalSphere.segmentCount = 256
@@ -30,13 +35,10 @@ extension SwiftDKNI {
         thermalMaterial.readsFromDepthBuffer = true
         thermalMaterial.isDoubleSided = true
         
-#if os(macOS)
-        thermalMaterial.diffuse.contents = NSColor.white
-#else
-        thermalMaterial.diffuse.contents = UIColor.white
-#endif
+        // FIX 2: Force SceneKit to generate and pass UV coordinates to the shader
+        // by assigning a valid texture to the diffuse channel instead of a flat color.
+        thermalMaterial.diffuse.contents = surfaceTexture
         
-        // Load the Metal Modifiers
         let fileManager = FileManager.default
         let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let geometryShaderURL = documentsURL.appendingPathComponent("stars/thermal_geometry.metal")
@@ -50,25 +52,27 @@ extension SwiftDKNI {
                 .geometry: geometrySource,
                 .surface: surfaceSource
             ]
+            print("Shaders loaded successfully.")
         } catch {
             print("CRITICAL: Failed to load Thermal shader files: \(error)")
             thermalMaterial.shaderModifiers = [:]
         }
         
         // Bind scalars
-        var warpIntensity = config.warpIntensity
-        var directionMultiplier = config.directionMultiplier
-        var shaderThermalRadius = thermalShellRadius
+        let warpIntensity = config.warpIntensity
+        let directionMultiplier = config.directionMultiplier
+        let shaderThermalRadius = thermalShellRadius
         
-        thermalMaterial.setValue(Data(bytes: &warpIntensity, count: MemoryLayout<Float>.size), forKey: "u_warpIntensity")
-        thermalMaterial.setValue(Data(bytes: &directionMultiplier, count: MemoryLayout<Float>.size), forKey: "u_directionMultiplier")
-        thermalMaterial.setValue(Data(bytes: &shaderThermalRadius, count: MemoryLayout<Float>.size), forKey: "u_thermalRadius")
+        print("Binding Uniforms - Warp: \(warpIntensity), DirMult: \(directionMultiplier)")
         
-        // Bind the 3D voxel grid
+        // FIX 1: Use NSNumber to guarantee SceneKit bridges the floats to Metal
+        thermalMaterial.setValue(NSNumber(value: warpIntensity), forKey: "u_warpIntensity")
+        thermalMaterial.setValue(NSNumber(value: directionMultiplier), forKey: "u_directionMultiplier")
+        thermalMaterial.setValue(NSNumber(value: shaderThermalRadius), forKey: "u_thermalRadius")
+        
         let voxelProperty = SCNMaterialProperty(contents: voxelCube)
         thermalMaterial.setValue(voxelProperty, forKey: "voxelCube")
         
-        // Safely wrap whatever content type the surface gave us into an SCNMaterialProperty for the shader
         let surfaceProperty = SCNMaterialProperty(contents: surfaceTexture)
         thermalMaterial.setValue(surfaceProperty, forKey: "solarSurfaceTexture")
         
@@ -77,6 +81,8 @@ extension SwiftDKNI {
         let thermalShellNode = SCNNode(geometry: thermalSphere)
         thermalShellNode.name = "thermal"
         thermalShellNode.renderingOrder = 40
+        
+        print("--------------------------")
         
         return thermalShellNode
     }
