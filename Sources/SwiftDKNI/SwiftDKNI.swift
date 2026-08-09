@@ -529,13 +529,15 @@ extension SwiftDKNI {
             // Get the surface material of the sun to bind to the halo and distortion
         let surfaceMaterial = sphere.materials.first!
         let surfaceTexture = surfaceMaterial.diffuse.contents as! MTLTexture
+        
         let thermalShellNode = self.generateThermalAtmosphericNode(
             radius: Float(sphere.radius),
             thermalRadius: 1.15,
-            surfaceTexture: surfaceTexture,
+            surfaceContents: surfaceTexture,
             voxelCube: sharedMagneticVolume!,
-            config: stellarConfig.thermalConfig)
-        coronalSurfaceNode.addChildNode(thermalShellNode)
+            config: stellarConfig.thermalConfig
+            )
+                coronalSurfaceNode.addChildNode(thermalShellNode)
         
         return coronalSurfaceNode
     }
