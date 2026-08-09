@@ -453,7 +453,7 @@ extension SwiftDKNI {
                         
             let calculatedPointsPerEvent = max(500, maxPointsPerCME / max(1, events.count))
                         
-            for event in events {
+            for (i, event) in events.enumerated() {
                 guard event.latitude != nil, event.longitude != nil else { continue }
                             
                 let parsedDate = donkiFormatter.date(from: event.startTime) ?? backupISOFormatter.date(from: event.startTime)
@@ -512,6 +512,8 @@ extension SwiftDKNI {
                         print("Warning: Missing Magnetic Volume, CME will not render correctly.")
                     }
                 }
+                // Add CME prefix for filtering during material uniform changes
+                cmeNode.name = "CME_\(i)"
                 coronalSurfaceNode.addChildNode(cmeNode)
             }
         }
@@ -591,5 +593,68 @@ extension SwiftDKNI {
             
             sceneView.technique = technique
         }
+    
+}
+
+
+extension SwiftDKNI {
+    
+    /// Updates the material uniforms for the primary energy tunnels node
+    public func updateEnergyTunnelConfigToMaterial(config: EnergyTunnelConfig, node: SCNNode) {
+        // Locate the specific node named "energyTunnels"
+        guard let tunnelNode = node.childNode(withName: "energyTunnels", recursively: true),
+              let material = tunnelNode.geometry?.materials.first else {
+            print("Warning: Could not locate node named 'energyTunnels' or its material.")
+            return
+        }
+        
+        var tunnelRadius = config.tunnelRadiusBase
+        material.setValue(Data(bytes: &tunnelRadius, count: MemoryLayout<Float>.size), forKey: "u_tunnelRadiusBase")
+        
+        var baseSize = config.particleBaseSize
+        material.setValue(Data(bytes: &baseSize, count: MemoryLayout<Float>.size), forKey: "u_particleBaseSize")
+        
+        var variance = config.particleVariance
+        material.setValue(Data(bytes: &variance, count: MemoryLayout<Float>.size), forKey: "u_particleVariance")
+        
+        var warp = config.warpIntensity
+        material.setValue(Data(bytes: &warp, count: MemoryLayout<Float>.size), forKey: "u_warpIntensity")
+        
+        var boil = config.boilSpeed
+        material.setValue(Data(bytes: &boil, count: MemoryLayout<Float>.size), forKey: "u_boilSpeed")
+        
+        var twinkle = config.twinkleSpeed
+        material.setValue(Data(bytes: &twinkle, count: MemoryLayout<Float>.size), forKey: "u_twinkleSpeed")
+        
+        material.setValue(NSValue(scnVector3: config.coreColor), forKey: "u_coreColor")
+        material.setValue(NSValue(scnVector3: config.midColor), forKey: "u_midColor")
+        material.setValue(NSValue(scnVector3: config.edgeColor), forKey: "u_edgeColor")
+        
+        var hdrMultiplier = config.hdrMultiplier
+        material.setValue(Data(bytes: &hdrMultiplier, count: MemoryLayout<Float>.size), forKey: "u_hdrMultiplier")
+    }
+    
+    /// Iterates through all Coronal Mass Ejection nodes and updates their global uniform overrides
+    public func updateCMEConfigTomaterial(config: CMEConfig, node: SCNNode) {
+        // Enumerate through all children to find matching CME prefixes
+        node.enumerateChildNodes { (child, stop) in
+            guard let name = child.name, name.hasPrefix("CME_"),
+                  let material = child.geometry?.materials.first else {
+                return
+            }
+            
+            // Update the global timeline and snapshot controls
+            material.setValue(NSNumber(value: config.globalTime), forKey: "u_globalTime")
+            material.setValue(NSNumber(value: config.scnFrameTimeSnapshot), forKey: "u_scnFrameTimeSnapshot")
+            
+            // Update physical deformation constraints
+            material.setValue(NSNumber(value: config.thickness), forKey: "u_thickness")
+            material.setValue(NSNumber(value: config.ejectionMultiplier), forKey: "u_ejectionMultiplier")
+            
+            // Note: u_loopTime and u_ignitionTime are typically baked per-event during instantiation.
+            // If you need to force a global loop duration override on the fly, you can uncomment below:
+            // material.setValue(NSNumber(value: Float(config.visualLoopDuration)), forKey: "u_loopTime")
+        }
+    }
     
 }

@@ -278,6 +278,7 @@ extension CMEGeometryBuilder {
         geometry.boundingBox = (min: minVec, max: maxVec)
                 
         let node = SCNNode(geometry: geometry)
+        node.name = "energyTunnels"
         node.categoryBitMask = 2
         node.renderingOrder = 10
         return node
