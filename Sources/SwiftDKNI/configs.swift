@@ -221,7 +221,7 @@ import SceneKit
 public struct StarThermalConfig: Codable {
     public var warpIntensity: Float = 1.0
     public var opacity: Float = 0.05
-    public var color: SCNVector3 = SCNVector3(1.0, 0.85, 0.1) // Intense Golden Yellow
+    public var color: SCNVector3 = SCNVector3(1.0, 0.65, 0.05)
     public var directionMultiplier: Float = 1.0 // Controls the speed/influence of the voxel direction
     
     public init() {}
