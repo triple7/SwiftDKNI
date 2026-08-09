@@ -14,11 +14,11 @@ extension SwiftDKNI {
     public func generateThermalAtmosphericNode(
         radius: Float,
         thermalRadius: Float,
-        surfaceContents: Any, // Accept Any (handles MTLTexture, NSImage, or UIImage safely)
+        surfaceTexture: MTLTexture,
         voxelCube: MTLTexture,
         config: StarThermalConfig = StarThermalConfig()
     ) -> SCNNode {
-        
+        print("generateThermalAtmosphericNode: thermal radius \(thermalRadius)")
         let thermalShellRadius = radius * thermalRadius
         let thermalSphere = SCNSphere(radius: CGFloat(thermalShellRadius))
         thermalSphere.segmentCount = 256
@@ -69,7 +69,7 @@ extension SwiftDKNI {
         thermalMaterial.setValue(voxelProperty, forKey: "voxelCube")
         
         // Safely wrap whatever content type the surface gave us into an SCNMaterialProperty for the shader
-        let surfaceProperty = SCNMaterialProperty(contents: surfaceContents)
+        let surfaceProperty = SCNMaterialProperty(contents: surfaceTexture)
         thermalMaterial.setValue(surfaceProperty, forKey: "solarSurfaceTexture")
         
         thermalSphere.materials = [thermalMaterial]

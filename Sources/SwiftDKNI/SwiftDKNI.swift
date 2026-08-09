@@ -527,18 +527,19 @@ extension SwiftDKNI {
         // --- THERMAL DISTORTION SHELL
         // Create a sphere slightly larger than the base solar radius to act as the atmospheric volume
             // Get the surface material of the sun to bind to the halo and distortion
-        let surfaceMaterial = sphere.materials.first!
-        let surfaceTexture = surfaceMaterial.diffuse.contents as! MTLTexture
-        
-        let thermalShellNode = self.generateThermalAtmosphericNode(
-            radius: Float(sphere.radius),
-            thermalRadius: 1.15,
-            surfaceContents: surfaceTexture,
-            voxelCube: sharedMagneticVolume!,
-            config: stellarConfig.thermalConfig
+        if let surfaceMaterial = sphere.materials.first,
+           let surfaceContents = surfaceMaterial.diffuse.contents,
+           let metalSurfaceTexture = TextureLoaderUtility.loadTexture(from: surfaceContents, device: device) {
+            
+            let thermalShellNode = self.generateThermalAtmosphericNode(
+                radius: Float(sphere.radius),
+                thermalRadius: 1.15,
+                surfaceTexture: metalSurfaceTexture, // Now guaranteed to be a valid MTLTexture
+                voxelCube: sharedMagneticVolume!,
+                config: stellarConfig.thermalConfig
             )
-                coronalSurfaceNode.addChildNode(thermalShellNode)
-        
+            coronalSurfaceNode.addChildNode(thermalShellNode)
+        }
         return coronalSurfaceNode
     }
 
