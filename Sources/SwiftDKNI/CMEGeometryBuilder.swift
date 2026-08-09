@@ -272,7 +272,7 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             return node
         }
 
-    public func createCoronalSurface(from lines: [MagneticLoopLine], solarRadius: Float) -> SCNNode {
+    public func createCoronalSurface(from lines: [MagneticLoopLine], energyTunnelConfig: EnergyTunnelConfig, solarRadius: Float) -> SCNNode {
         let masterNode = SCNNode()
         
         let baseLoopStart = CACurrentMediaTime()
@@ -288,7 +288,7 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
         baseLoopsNode.categoryBitMask = 2
         
         let tunnelStart = CACurrentMediaTime()
-        let energyTunnelsNode = buildAcceleratedEnergyTunnels(from: lines, solarRadius: solarRadius)
+        let energyTunnelsNode = buildAcceleratedEnergyTunnels(from: lines, solarRadius: solarRadius, config: energyTunnelConfig)
         energyTunnelsNode.categoryBitMask = 4
         let tunnelEnd = CACurrentMediaTime()
         print("createCoronalSurface: Created energy tunnels in \(tunnelEnd - tunnelStart) seconds.")
