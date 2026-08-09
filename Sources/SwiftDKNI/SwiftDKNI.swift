@@ -524,9 +524,17 @@ extension SwiftDKNI {
         // 🚨 FIX: Pass the securely hoisted topological image, eliminating the race condition
         try await applySolarSurfaceMaterials(to: sphere, topologicalImage: fetchedTopologicalImage, cachedIfExists: cachedIfExists)
 
-        // --- THERMAL DISTORTION SHELL (TECHNIQUE 1) ---
+        // --- THERMAL DISTORTION SHELL
         // Create a sphere slightly larger than the base solar radius to act as the atmospheric volume
-        let thermalShellNode = self.generateThermalAtmosphericNode(radius: Float(sphere.radius), thermalRadius: 1.15, voxelCube: sharedMagneticVolume!, config: stellarConfig.thermalConfig)
+            // Get the surface material of the sun to bind to the halo and distortion
+        let surfaceMaterial = sphere.materials.first!
+        let surfaceTexture = surfaceMaterial.diffuse.contents as! MTLTexture
+        let thermalShellNode = self.generateThermalAtmosphericNode(
+            radius: Float(sphere.radius),
+            thermalRadius: 1.15,
+            surfaceTexture: surfaceTexture,
+            voxelCube: sharedMagneticVolume!,
+            config: stellarConfig.thermalConfig)
         coronalSurfaceNode.addChildNode(thermalShellNode)
         
         return coronalSurfaceNode
