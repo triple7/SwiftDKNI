@@ -537,7 +537,7 @@ extension SwiftDKNI {
                     
                     let thermalShellNode = self.generateThermalAtmosphericNode(
                         radius: Float(sphere.radius),
-                        thermalRadius: 1.15,
+                        thermalRadius: 1.30,
                         surfaceTexture: metalSurfaceTexture, // Now guaranteed to be a valid MTLTexture
                         voxelCube: sharedMagneticVolume!,
                         config: stellarConfig.thermalConfig
