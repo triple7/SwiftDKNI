@@ -656,5 +656,90 @@ extension SwiftDKNI {
             // material.setValue(NSNumber(value: Float(config.visualLoopDuration)), forKey: "u_loopTime")
         }
     }
+
+    /// Updates a specific material uniform for the primary energy tunnels node based on a provided key
+    public func updateEnergyTunnelConfigToMaterial(config: EnergyTunnelConfig, key: String, node: SCNNode) {
+        // Locate the specific node named "energyTunnels"
+        guard let tunnelNode = node.childNode(withName: "energyTunnels", recursively: true),
+              let material = tunnelNode.geometry?.materials.first else {
+            print("Warning: Could not locate node named 'energyTunnels' or its material.")
+            return
+        }
+        
+        switch key {
+        case "u_tunnelRadiusBase":
+            var value = config.tunnelRadiusBase
+            material.setValue(Data(bytes: &value, count: MemoryLayout<Float>.size), forKey: key)
+            
+        case "u_particleBaseSize":
+            var value = config.particleBaseSize
+            material.setValue(Data(bytes: &value, count: MemoryLayout<Float>.size), forKey: key)
+            
+        case "u_particleVariance":
+            var value = config.particleVariance
+            material.setValue(Data(bytes: &value, count: MemoryLayout<Float>.size), forKey: key)
+            
+        case "u_warpIntensity":
+            var value = config.warpIntensity
+            material.setValue(Data(bytes: &value, count: MemoryLayout<Float>.size), forKey: key)
+            
+        case "u_boilSpeed":
+            var value = config.boilSpeed
+            material.setValue(Data(bytes: &value, count: MemoryLayout<Float>.size), forKey: key)
+            
+        case "u_twinkleSpeed":
+            var value = config.twinkleSpeed
+            material.setValue(Data(bytes: &value, count: MemoryLayout<Float>.size), forKey: key)
+            
+        case "u_coreColor":
+            material.setValue(NSValue(scnVector3: config.coreColor), forKey: key)
+            
+        case "u_midColor":
+            material.setValue(NSValue(scnVector3: config.midColor), forKey: key)
+            
+        case "u_edgeColor":
+            material.setValue(NSValue(scnVector3: config.edgeColor), forKey: key)
+            
+        case "u_hdrMultiplier":
+            var value = config.hdrMultiplier
+            material.setValue(Data(bytes: &value, count: MemoryLayout<Float>.size), forKey: key)
+            
+        default:
+            print("Warning: Unrecognized uniform key '\(key)' for EnergyTunnelConfig.")
+        }
+    }
+
+    /// Iterates through all Coronal Mass Ejection nodes and updates a specific global uniform override based on a key
+    public func updateCMEConfigTomaterial(config: CMEConfig, key: String, node: SCNNode) {
+        let valueToSet: Any
+        
+        // Evaluate the key once before looping to optimize performance
+        switch key {
+        case "u_globalTime":
+            valueToSet = NSNumber(value: config.globalTime)
+        case "u_scnFrameTimeSnapshot":
+            valueToSet = NSNumber(value: config.scnFrameTimeSnapshot)
+        case "u_thickness":
+            valueToSet = NSNumber(value: config.thickness)
+        case "u_ejectionMultiplier":
+            valueToSet = NSNumber(value: config.ejectionMultiplier)
+        case "u_loopTime":
+            valueToSet = NSNumber(value: Float(config.visualLoopDuration))
+        default:
+            print("Warning: Unrecognized uniform key '\(key)' for CMEConfig.")
+            return
+        }
+        
+        // Enumerate through all children to find matching CME prefixes
+        node.enumerateChildNodes { (child, stop) in
+            guard let name = child.name, name.hasPrefix("CME_"),
+                  let material = child.geometry?.materials.first else {
+                return
+            }
+            
+            // Apply the pre-calculated uniform value
+            material.setValue(valueToSet, forKey: key)
+        }
+    }
     
 }

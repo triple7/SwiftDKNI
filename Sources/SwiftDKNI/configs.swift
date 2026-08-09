@@ -19,6 +19,16 @@ public struct StellarConfig: Codable {
         self.energyTunnelConfig = energyTunnelConfig
         self.cmeConfig = cmeConfig
     }
+    
+    // MARK: - Mutating Setters
+    
+    public mutating func setEnergyTunnelConfig(_ value: EnergyTunnelConfig) {
+        self.energyTunnelConfig = value
+    }
+    
+    public mutating func setCMEConfig(_ value: CMEConfig) {
+        self.cmeConfig = value
+    }
 }
 
 public struct EnergyTunnelConfig: Codable {
@@ -38,6 +48,52 @@ public struct EnergyTunnelConfig: Codable {
     public var hdrMultiplier: Float = 0.8
     
     public init() {}
+    
+    // MARK: - Mutating Setters
+    
+    public mutating func setParticlesPerUnitLength(_ value: Float) {
+        self.particlesPerUnitLength = value
+    }
+    
+    public mutating func setTunnelRadiusBase(_ value: Float) {
+        self.tunnelRadiusBase = value
+    }
+    
+    public mutating func setParticleBaseSize(_ value: Float) {
+        self.particleBaseSize = value
+    }
+    
+    public mutating func setParticleVariance(_ value: Float) {
+        self.particleVariance = value
+    }
+    
+    public mutating func setWarpIntensity(_ value: Float) {
+        self.warpIntensity = value
+    }
+    
+    public mutating func setBoilSpeed(_ value: Float) {
+        self.boilSpeed = value
+    }
+    
+    public mutating func setTwinkleSpeed(_ value: Float) {
+        self.twinkleSpeed = value
+    }
+    
+    public mutating func setCoreColor(_ value: SCNVector3) {
+        self.coreColor = value
+    }
+    
+    public mutating func setMidColor(_ value: SCNVector3) {
+        self.midColor = value
+    }
+    
+    public mutating func setEdgeColor(_ value: SCNVector3) {
+        self.edgeColor = value
+    }
+    
+    public mutating func setHdrMultiplier(_ value: Float) {
+        self.hdrMultiplier = value
+    }
     
     // MARK: - Codable Conformance for SCNVector3
     
@@ -110,5 +166,42 @@ public struct CMEConfig: Codable {
     public var defaultHalfAngle: Float = 20.0
     
     public init() {}
+    
+    // MARK: - Mutating Setters
+    
+    public mutating func setVisualLoopDuration(_ value: Double) {
+        self.visualLoopDuration = value
+    }
+    
+    public mutating func setGlobalTime(_ value: Float) {
+        self.globalTime = value
+    }
+    
+    public mutating func setScnFrameTimeSnapshot(_ value: Float) {
+        self.scnFrameTimeSnapshot = value
+    }
+    
+    public mutating func setPointCount(_ value: Int) {
+        self.pointCount = value
+    }
+    
+    public mutating func setWarpIntensity(_ value: Float) {
+        self.warpIntensity = value
+    }
+    
+    public mutating func setThickness(_ value: Float) {
+        self.thickness = value
+    }
+    
+    public mutating func setEjectionMultiplier(_ value: Float) {
+        self.ejectionMultiplier = value
+    }
+    
+    public mutating func setDefaultSpeed(_ value: Float) {
+        self.defaultSpeed = value
+    }
+    
+    public mutating func setDefaultHalfAngle(_ value: Float) {
+        self.defaultHalfAngle = value
+    }
 }
-
