@@ -151,12 +151,12 @@ public struct EnergyTunnelConfig: Codable {
 
 public struct CMEConfig: Codable {
     // Timeline constraints
-    public var visualLoopDuration: Double = 10.0
+    public var visualLoopDuration: Double = 180.0
     public var globalTime: Float = -1.0
     public var scnFrameTimeSnapshot: Float = 0.0
     
     // Physics and Deformation
-    public var pointCount: Int = 1000
+    public var pointCount: Int = 200
     public var warpIntensity: Float = 0.025
     public var thickness: Float = 0.3
     public var ejectionMultiplier: Float = 1000.0

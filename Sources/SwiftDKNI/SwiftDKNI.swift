@@ -500,11 +500,13 @@ extension SwiftDKNI {
                                 
                     // Scaling of the event speed into scn units is done inside the metal geometry shader
                     let rawSpeed = Float(event.speed) ?? cMEConfig.defaultSpeed
-                    let rawHalfAngle = Float(event.halfAngle) ?? cMEConfig.defaultHalfAngle
+                    let rawHalfAngleRadians = (Float(event.halfAngle) ?? cMEConfig.defaultHalfAngle) * 3.1415927 / 180.0
                     
                     material.setValue(NSNumber(value: cMEConfig.ejectionMultiplier), forKey: "u_ejectionMultiplier")
                     material.setValue(NSNumber(value: rawSpeed), forKey: "u_speed")
-                    material.setValue(NSNumber(value: rawHalfAngle), forKey: "u_halfAngle")
+                    material.setValue(NSNumber(value: rawHalfAngleRadians), forKey: "u_halfAngle")
+                    let tanHalfAngle = Float(tan(rawHalfAngleRadians))
+                    material.setValue(NSNumber(value: tanHalfAngle), forKey: "u_tanHalfAngle")
                                 
                     if let vp = sharedVolumeProperty {
                         material.setValue(vp, forKey: "u_magneticVolume")
