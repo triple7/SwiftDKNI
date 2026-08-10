@@ -228,6 +228,11 @@ public struct StarThermalConfig: Codable {
     public var minMultiplier: Float = 1.2
     public var maxMultiplier: Float = 3.5
     
+    // MARK: - Deep Color & Blending Uniforms
+    public var surfaceColorInfluence: Float = 0.75
+    public var deepColor: SCNVector3 = SCNVector3(1.0, 0.05, 0.0)
+    public var hotColor: SCNVector3 = SCNVector3(1.0, 0.7, 0.1)
+    
     public init() {}
     
     // MARK: - Mutating Setters
@@ -245,11 +250,16 @@ public struct StarThermalConfig: Codable {
     public mutating func setMinMultiplier(_ value: Float) { self.minMultiplier = value }
     public mutating func setMaxMultiplier(_ value: Float) { self.maxMultiplier = value }
     
+    public mutating func setSurfaceColorInfluence(_ value: Float) { self.surfaceColorInfluence = value }
+    public mutating func setDeepColor(_ value: SCNVector3) { self.deepColor = value }
+    public mutating func setHotColor(_ value: SCNVector3) { self.hotColor = value }
+    
     // MARK: - Codable Conformance
     
     enum CodingKeys: String, CodingKey {
         case warpIntensity, opacity, color, directionMultiplier
         case haloInner, haloOuter, maskMin, maskMax, contrastPower, minMultiplier, maxMultiplier
+        case surfaceColorInfluence, deepColor, hotColor
     }
     
     public init(from decoder: Decoder) throws {
@@ -269,9 +279,19 @@ public struct StarThermalConfig: Codable {
         minMultiplier = try container.decodeIfPresent(Float.self, forKey: .minMultiplier) ?? 1.2
         maxMultiplier = try container.decodeIfPresent(Float.self, forKey: .maxMultiplier) ?? 3.5
         
+        surfaceColorInfluence = try container.decodeIfPresent(Float.self, forKey: .surfaceColorInfluence) ?? 0.75
+        
         // Decode SCNVector3 as a Float array
         let colorArray = try container.decode([Float].self, forKey: .color)
         color = SCNVector3(colorArray[0], colorArray[1], colorArray[2])
+        
+        if let deepColorArray = try container.decodeIfPresent([Float].self, forKey: .deepColor) {
+            deepColor = SCNVector3(deepColorArray[0], deepColorArray[1], deepColorArray[2])
+        }
+        
+        if let hotColorArray = try container.decodeIfPresent([Float].self, forKey: .hotColor) {
+            hotColor = SCNVector3(hotColorArray[0], hotColorArray[1], hotColorArray[2])
+        }
     }
     
     public func encode(to encoder: Encoder) throws {
@@ -289,8 +309,12 @@ public struct StarThermalConfig: Codable {
         try container.encode(minMultiplier, forKey: .minMultiplier)
         try container.encode(maxMultiplier, forKey: .maxMultiplier)
         
+        try container.encode(surfaceColorInfluence, forKey: .surfaceColorInfluence)
+        
         // Encode SCNVector3 as a Float array for safe serialization
         try container.encode([Float(color.x), Float(color.y), Float(color.z)], forKey: .color)
+        try container.encode([Float(deepColor.x), Float(deepColor.y), Float(deepColor.z)], forKey: .deepColor)
+        try container.encode([Float(hotColor.x), Float(hotColor.y), Float(hotColor.z)], forKey: .hotColor)
     }
 }
 

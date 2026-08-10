@@ -12,85 +12,91 @@ import Foundation
 extension SwiftDKNI {
     
     public func generateThermalAtmosphericNode(
-        radius: Float,
-        thermalRadius: Float,
-        surfaceTexture: MTLTexture,
-        voxelCube: MTLTexture,
-        config: StarThermalConfig = StarThermalConfig()
-    ) -> SCNNode {
-        
-        print("--- THERMAL NODE DEBUG ---")
-        print("Radius: \(radius), Thermal Multiplier: \(thermalRadius)")
-        print("Surface Texture Size: \(surfaceTexture.width)x\(surfaceTexture.height)")
-        print("Voxel Cube Size: \(voxelCube.width)x\(voxelCube.height)x\(voxelCube.depth)")
-        
-        let thermalShellRadius = radius * thermalRadius
-        let thermalSphere = SCNSphere(radius: CGFloat(thermalShellRadius))
-        thermalSphere.segmentCount = 256
-        
-        let thermalMaterial = SCNMaterial()
-        thermalMaterial.lightingModel = .constant
-        thermalMaterial.blendMode = .add
-        thermalMaterial.writesToDepthBuffer = false
-        thermalMaterial.readsFromDepthBuffer = true
-        thermalMaterial.isDoubleSided = true
-        
-        // FIX 2: Force SceneKit to generate and pass UV coordinates to the shader
-        // by assigning a valid texture to the diffuse channel instead of a flat color.
-        thermalMaterial.diffuse.contents = surfaceTexture
-        
-        let fileManager = FileManager.default
-        let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let geometryShaderURL = documentsURL.appendingPathComponent("stars/thermal_geometry.metal")
-        let surfaceShaderURL = documentsURL.appendingPathComponent("stars/thermal_surface.metal")
-        
-        do {
-            let geometrySource = try String(contentsOf: geometryShaderURL, encoding: .utf8)
-            let surfaceSource = try String(contentsOf: surfaceShaderURL, encoding: .utf8)
+            radius: Float,
+            thermalRadius: Float,
+            surfaceTexture: MTLTexture,
+            voxelCube: MTLTexture,
+            config: StarThermalConfig = StarThermalConfig()
+        ) -> SCNNode {
             
-            thermalMaterial.shaderModifiers = [
-                .geometry: geometrySource,
-                .surface: surfaceSource
-            ]
-            print("Shaders loaded successfully.")
-        } catch {
-            print("CRITICAL: Failed to load Thermal shader files: \(error)")
-            thermalMaterial.shaderModifiers = [:]
+            print("--- THERMAL NODE DEBUG ---")
+            print("Radius: \(radius), Thermal Multiplier: \(thermalRadius)")
+            print("Surface Texture Size: \(surfaceTexture.width)x\(surfaceTexture.height)")
+            print("Voxel Cube Size: \(voxelCube.width)x\(voxelCube.height)x\(voxelCube.depth)")
+            
+            let thermalShellRadius = radius * thermalRadius
+            let thermalSphere = SCNSphere(radius: CGFloat(thermalShellRadius))
+            thermalSphere.segmentCount = 256
+            
+            let thermalMaterial = SCNMaterial()
+            thermalMaterial.lightingModel = .constant
+            thermalMaterial.blendMode = .add
+            thermalMaterial.writesToDepthBuffer = false
+            thermalMaterial.readsFromDepthBuffer = true
+            thermalMaterial.isDoubleSided = true
+            
+            // Force SceneKit to generate and pass UV coordinates to the shader
+            // by assigning a valid texture to the diffuse channel instead of a flat color.
+            thermalMaterial.diffuse.contents = surfaceTexture
+            
+            let fileManager = FileManager.default
+            let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            let geometryShaderURL = documentsURL.appendingPathComponent("stars/thermal_geometry.metal")
+            let surfaceShaderURL = documentsURL.appendingPathComponent("stars/thermal_surface.metal")
+            
+            do {
+                let geometrySource = try String(contentsOf: geometryShaderURL, encoding: .utf8)
+                let surfaceSource = try String(contentsOf: surfaceShaderURL, encoding: .utf8)
+                
+                thermalMaterial.shaderModifiers = [
+                    .geometry: geometrySource,
+                    .surface: surfaceSource
+                ]
+                print("Shaders loaded successfully.")
+            } catch {
+                print("CRITICAL: Failed to load Thermal shader files: \(error)")
+                thermalMaterial.shaderModifiers = [:]
+            }
+            
+            // Bind scalars
+            let shaderThermalRadius = thermalShellRadius
+            
+            print("Binding Uniforms - Warp: \(config.warpIntensity), DirMult: \(config.directionMultiplier)")
+            
+            // Use NSNumber to guarantee SceneKit bridges the floats to Metal
+            thermalMaterial.setValue(NSNumber(value: config.warpIntensity), forKey: "u_warpIntensity")
+            thermalMaterial.setValue(NSNumber(value: config.directionMultiplier), forKey: "u_directionMultiplier")
+            thermalMaterial.setValue(NSNumber(value: shaderThermalRadius), forKey: "u_thermalRadius")
+            
+            // BIND UI PANEL UNIFORMS
+            thermalMaterial.setValue(NSNumber(value: config.haloInner), forKey: "u_haloInner")
+            thermalMaterial.setValue(NSNumber(value: config.haloOuter), forKey: "u_haloOuter")
+            thermalMaterial.setValue(NSNumber(value: config.maskMin), forKey: "u_maskMin")
+            thermalMaterial.setValue(NSNumber(value: config.maskMax), forKey: "u_maskMax")
+            thermalMaterial.setValue(NSNumber(value: config.contrastPower), forKey: "u_contrastPower")
+            thermalMaterial.setValue(NSNumber(value: config.minMultiplier), forKey: "u_minMultiplier")
+            thermalMaterial.setValue(NSNumber(value: config.maxMultiplier), forKey: "u_maxMultiplier")
+            
+            // --- NEW: BIND COLOR & BLENDING UNIFORMS ---
+            thermalMaterial.setValue(NSNumber(value: config.surfaceColorInfluence), forKey: "u_surfaceColorInfluence")
+            thermalMaterial.setValue(NSValue(scnVector3: config.deepColor), forKey: "u_deepColor")
+            thermalMaterial.setValue(NSValue(scnVector3: config.hotColor), forKey: "u_hotColor")
+            
+            let voxelProperty = SCNMaterialProperty(contents: voxelCube)
+            thermalMaterial.setValue(voxelProperty, forKey: "voxelCube")
+            
+            let surfaceProperty = SCNMaterialProperty(contents: surfaceTexture)
+            thermalMaterial.setValue(surfaceProperty, forKey: "solarSurfaceTexture")
+            
+            thermalSphere.materials = [thermalMaterial]
+            
+            let thermalShellNode = SCNNode(geometry: thermalSphere)
+            thermalShellNode.name = "thermal"
+            thermalShellNode.renderingOrder = 40
+            
+            print("--------------------------")
+            
+            return thermalShellNode
         }
-        
-        // Bind scalars
-        let shaderThermalRadius = thermalShellRadius
-        
-        print("Binding Uniforms - Warp: \(config.warpIntensity), DirMult: \(config.directionMultiplier)")
-        
-        // FIX 1: Use NSNumber to guarantee SceneKit bridges the floats to Metal
-        thermalMaterial.setValue(NSNumber(value: config.warpIntensity), forKey: "u_warpIntensity")
-        thermalMaterial.setValue(NSNumber(value: config.directionMultiplier), forKey: "u_directionMultiplier")
-        thermalMaterial.setValue(NSNumber(value: shaderThermalRadius), forKey: "u_thermalRadius")
-        
-        // --- NEW: BIND UI PANEL UNIFORMS ---
-        thermalMaterial.setValue(NSNumber(value: config.haloInner), forKey: "u_haloInner")
-        thermalMaterial.setValue(NSNumber(value: config.haloOuter), forKey: "u_haloOuter")
-        thermalMaterial.setValue(NSNumber(value: config.maskMin), forKey: "u_maskMin")
-        thermalMaterial.setValue(NSNumber(value: config.maskMax), forKey: "u_maskMax")
-        thermalMaterial.setValue(NSNumber(value: config.contrastPower), forKey: "u_contrastPower")
-        thermalMaterial.setValue(NSNumber(value: config.minMultiplier), forKey: "u_minMultiplier")
-        thermalMaterial.setValue(NSNumber(value: config.maxMultiplier), forKey: "u_maxMultiplier")
-        
-        let voxelProperty = SCNMaterialProperty(contents: voxelCube)
-        thermalMaterial.setValue(voxelProperty, forKey: "voxelCube")
-        
-        let surfaceProperty = SCNMaterialProperty(contents: surfaceTexture)
-        thermalMaterial.setValue(surfaceProperty, forKey: "solarSurfaceTexture")
-        
-        thermalSphere.materials = [thermalMaterial]
-        
-        let thermalShellNode = SCNNode(geometry: thermalSphere)
-        thermalShellNode.name = "thermal"
-        thermalShellNode.renderingOrder = 40
-        
-        print("--------------------------")
-        
-        return thermalShellNode
-    }
+    
 }
