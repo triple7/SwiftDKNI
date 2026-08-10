@@ -764,5 +764,52 @@ extension SwiftDKNI {
             material.setValue(valueToSet, forKey: key)
         }
     }
-    
+
+    // Updates thermal node config
+    public func updateThermalConfigToMaterial(config: StarThermalConfig, key: String, node: SCNNode) {
+            // Locate the specific node named "thermal"
+            guard let thermalNode = node.childNode(withName: "thermal", recursively: true),
+                  let material = thermalNode.geometry?.materials.first else {
+                print("Warning: Could not locate node named 'thermal' or its material.")
+                return
+            }
+            
+            switch key {
+            case "u_warpIntensity":
+                material.setValue(NSNumber(value: config.warpIntensity), forKey: key)
+                
+            case "u_directionMultiplier":
+                material.setValue(NSNumber(value: config.directionMultiplier), forKey: key)
+                
+            case "u_haloInner":
+                material.setValue(NSNumber(value: config.haloInner), forKey: key)
+                
+            case "u_haloOuter":
+                material.setValue(NSNumber(value: config.haloOuter), forKey: key)
+                
+            case "u_maskMin":
+                material.setValue(NSNumber(value: config.maskMin), forKey: key)
+                
+            case "u_maskMax":
+                material.setValue(NSNumber(value: config.maskMax), forKey: key)
+                
+            case "u_contrastPower":
+                material.setValue(NSNumber(value: config.contrastPower), forKey: key)
+                
+            case "u_minMultiplier":
+                material.setValue(NSNumber(value: config.minMultiplier), forKey: key)
+                
+            case "u_maxMultiplier":
+                material.setValue(NSNumber(value: config.maxMultiplier), forKey: key)
+                
+            case "u_opacity":
+                material.setValue(NSNumber(value: config.opacity), forKey: key)
+                
+            case "u_color":
+                material.setValue(NSValue(scnVector3: config.color), forKey: key)
+                
+            default:
+                print("Warning: Unrecognized uniform key '\(key)' for StarThermalConfig.")
+            }
+        }
 }
