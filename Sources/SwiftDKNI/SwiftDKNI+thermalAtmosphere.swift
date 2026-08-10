@@ -59,16 +59,23 @@ extension SwiftDKNI {
         }
         
         // Bind scalars
-        let warpIntensity = config.warpIntensity
-        let directionMultiplier = config.directionMultiplier
         let shaderThermalRadius = thermalShellRadius
         
-        print("Binding Uniforms - Warp: \(warpIntensity), DirMult: \(directionMultiplier)")
+        print("Binding Uniforms - Warp: \(config.warpIntensity), DirMult: \(config.directionMultiplier)")
         
         // FIX 1: Use NSNumber to guarantee SceneKit bridges the floats to Metal
-        thermalMaterial.setValue(NSNumber(value: warpIntensity), forKey: "u_warpIntensity")
-        thermalMaterial.setValue(NSNumber(value: directionMultiplier), forKey: "u_directionMultiplier")
+        thermalMaterial.setValue(NSNumber(value: config.warpIntensity), forKey: "u_warpIntensity")
+        thermalMaterial.setValue(NSNumber(value: config.directionMultiplier), forKey: "u_directionMultiplier")
         thermalMaterial.setValue(NSNumber(value: shaderThermalRadius), forKey: "u_thermalRadius")
+        
+        // --- NEW: BIND UI PANEL UNIFORMS ---
+        thermalMaterial.setValue(NSNumber(value: config.haloInner), forKey: "u_haloInner")
+        thermalMaterial.setValue(NSNumber(value: config.haloOuter), forKey: "u_haloOuter")
+        thermalMaterial.setValue(NSNumber(value: config.maskMin), forKey: "u_maskMin")
+        thermalMaterial.setValue(NSNumber(value: config.maskMax), forKey: "u_maskMax")
+        thermalMaterial.setValue(NSNumber(value: config.contrastPower), forKey: "u_contrastPower")
+        thermalMaterial.setValue(NSNumber(value: config.minMultiplier), forKey: "u_minMultiplier")
+        thermalMaterial.setValue(NSNumber(value: config.maxMultiplier), forKey: "u_maxMultiplier")
         
         let voxelProperty = SCNMaterialProperty(contents: voxelCube)
         thermalMaterial.setValue(voxelProperty, forKey: "voxelCube")
@@ -86,5 +93,4 @@ extension SwiftDKNI {
         
         return thermalShellNode
     }
-    
 }

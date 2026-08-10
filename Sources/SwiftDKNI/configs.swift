@@ -213,41 +213,43 @@ public struct CMEConfig: Codable {
     }
 }
 
-
-import SceneKit
-
-import SceneKit
-
 public struct StarThermalConfig: Codable {
     public var warpIntensity: Float = 1.0
     public var opacity: Float = 0.05
     public var color: SCNVector3 = SCNVector3(1.0, 0.65, 0.05)
     public var directionMultiplier: Float = 1.0 // Controls the speed/influence of the voxel direction
     
+    // MARK: - New Shader Uniforms
+    public var haloInner: Float = 0.3
+    public var haloOuter: Float = 0.9
+    public var maskMin: Float = 0.05
+    public var maskMax: Float = 0.6
+    public var contrastPower: Float = 1.2
+    public var minMultiplier: Float = 1.2
+    public var maxMultiplier: Float = 3.5
+    
     public init() {}
     
     // MARK: - Mutating Setters
     
-    public mutating func setWarpIntensity(_ value: Float) {
-        self.warpIntensity = value
-    }
+    public mutating func setWarpIntensity(_ value: Float) { self.warpIntensity = value }
+    public mutating func setOpacity(_ value: Float) { self.opacity = value }
+    public mutating func setColor(_ value: SCNVector3) { self.color = value }
+    public mutating func setDirectionMultiplier(_ value: Float) { self.directionMultiplier = value }
     
-    public mutating func setOpacity(_ value: Float) {
-        self.opacity = value
-    }
-    
-    public mutating func setColor(_ value: SCNVector3) {
-        self.color = value
-    }
-    
-    public mutating func setDirectionMultiplier(_ value: Float) {
-        self.directionMultiplier = value
-    }
+    public mutating func setHaloInner(_ value: Float) { self.haloInner = value }
+    public mutating func setHaloOuter(_ value: Float) { self.haloOuter = value }
+    public mutating func setMaskMin(_ value: Float) { self.maskMin = value }
+    public mutating func setMaskMax(_ value: Float) { self.maskMax = value }
+    public mutating func setContrastPower(_ value: Float) { self.contrastPower = value }
+    public mutating func setMinMultiplier(_ value: Float) { self.minMultiplier = value }
+    public mutating func setMaxMultiplier(_ value: Float) { self.maxMultiplier = value }
     
     // MARK: - Codable Conformance
     
     enum CodingKeys: String, CodingKey {
         case warpIntensity, opacity, color, directionMultiplier
+        case haloInner, haloOuter, maskMin, maskMax, contrastPower, minMultiplier, maxMultiplier
     }
     
     public init(from decoder: Decoder) throws {
@@ -258,6 +260,14 @@ public struct StarThermalConfig: Codable {
         
         // Use decodeIfPresent for backwards compatibility with existing config files
         directionMultiplier = try container.decodeIfPresent(Float.self, forKey: .directionMultiplier) ?? 1.0
+        
+        haloInner = try container.decodeIfPresent(Float.self, forKey: .haloInner) ?? 0.3
+        haloOuter = try container.decodeIfPresent(Float.self, forKey: .haloOuter) ?? 0.9
+        maskMin = try container.decodeIfPresent(Float.self, forKey: .maskMin) ?? 0.05
+        maskMax = try container.decodeIfPresent(Float.self, forKey: .maskMax) ?? 0.6
+        contrastPower = try container.decodeIfPresent(Float.self, forKey: .contrastPower) ?? 1.2
+        minMultiplier = try container.decodeIfPresent(Float.self, forKey: .minMultiplier) ?? 1.2
+        maxMultiplier = try container.decodeIfPresent(Float.self, forKey: .maxMultiplier) ?? 3.5
         
         // Decode SCNVector3 as a Float array
         let colorArray = try container.decode([Float].self, forKey: .color)
@@ -270,6 +280,14 @@ public struct StarThermalConfig: Codable {
         try container.encode(warpIntensity, forKey: .warpIntensity)
         try container.encode(opacity, forKey: .opacity)
         try container.encode(directionMultiplier, forKey: .directionMultiplier)
+        
+        try container.encode(haloInner, forKey: .haloInner)
+        try container.encode(haloOuter, forKey: .haloOuter)
+        try container.encode(maskMin, forKey: .maskMin)
+        try container.encode(maskMax, forKey: .maskMax)
+        try container.encode(contrastPower, forKey: .contrastPower)
+        try container.encode(minMultiplier, forKey: .minMultiplier)
+        try container.encode(maxMultiplier, forKey: .maxMultiplier)
         
         // Encode SCNVector3 as a Float array for safe serialization
         try container.encode([Float(color.x), Float(color.y), Float(color.z)], forKey: .color)
