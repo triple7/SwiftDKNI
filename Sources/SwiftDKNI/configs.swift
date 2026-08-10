@@ -54,61 +54,44 @@ public struct EnergyTunnelConfig: Codable {
     
     public var hdrMultiplier: Float = 0.8
     
+    // MARK: - Apex Turbulence Uniforms
+    public var turbulenceFrequency: Float = 10.0
+    public var turbulenceAmplitude: Float = 1.5
+    public var apexWarpMultiplier: Float = 4.0
+    public var apexSoftness: Float = 0.9
+    
     public init() {}
     
     // MARK: - Mutating Setters
     
-    public mutating func setParticlesPerUnitLength(_ value: Float) {
-        self.particlesPerUnitLength = value
-    }
+    public mutating func setParticlesPerUnitLength(_ value: Float) { self.particlesPerUnitLength = value }
+    public mutating func setTunnelRadiusBase(_ value: Float) { self.tunnelRadiusBase = value }
+    public mutating func setParticleBaseSize(_ value: Float) { self.particleBaseSize = value }
+    public mutating func setParticleVariance(_ value: Float) { self.particleVariance = value }
     
-    public mutating func setTunnelRadiusBase(_ value: Float) {
-        self.tunnelRadiusBase = value
-    }
+    public mutating func setWarpIntensity(_ value: Float) { self.warpIntensity = value }
+    public mutating func setBoilSpeed(_ value: Float) { self.boilSpeed = value }
+    public mutating func setTwinkleSpeed(_ value: Float) { self.twinkleSpeed = value }
     
-    public mutating func setParticleBaseSize(_ value: Float) {
-        self.particleBaseSize = value
-    }
+    public mutating func setCoreColor(_ value: SCNVector3) { self.coreColor = value }
+    public mutating func setMidColor(_ value: SCNVector3) { self.midColor = value }
+    public mutating func setEdgeColor(_ value: SCNVector3) { self.edgeColor = value }
     
-    public mutating func setParticleVariance(_ value: Float) {
-        self.particleVariance = value
-    }
+    public mutating func setHdrMultiplier(_ value: Float) { self.hdrMultiplier = value }
     
-    public mutating func setWarpIntensity(_ value: Float) {
-        self.warpIntensity = value
-    }
+    public mutating func setTurbulenceFrequency(_ value: Float) { self.turbulenceFrequency = value }
+    public mutating func setTurbulenceAmplitude(_ value: Float) { self.turbulenceAmplitude = value }
+    public mutating func setApexWarpMultiplier(_ value: Float) { self.apexWarpMultiplier = value }
+    public mutating func setApexSoftness(_ value: Float) { self.apexSoftness = value }
     
-    public mutating func setBoilSpeed(_ value: Float) {
-        self.boilSpeed = value
-    }
-    
-    public mutating func setTwinkleSpeed(_ value: Float) {
-        self.twinkleSpeed = value
-    }
-    
-    public mutating func setCoreColor(_ value: SCNVector3) {
-        self.coreColor = value
-    }
-    
-    public mutating func setMidColor(_ value: SCNVector3) {
-        self.midColor = value
-    }
-    
-    public mutating func setEdgeColor(_ value: SCNVector3) {
-        self.edgeColor = value
-    }
-    
-    public mutating func setHdrMultiplier(_ value: Float) {
-        self.hdrMultiplier = value
-    }
-    
-    // MARK: - Codable Conformance for SCNVector3
+    // MARK: - Codable Conformance
     
     enum CodingKeys: String, CodingKey {
         case particlesPerUnitLength, tunnelRadiusBase, particleBaseSize, particleVariance
         case warpIntensity, boilSpeed, twinkleSpeed
         case coreColor, midColor, edgeColor
         case hdrMultiplier
+        case turbulenceFrequency, turbulenceAmplitude, apexWarpMultiplier, apexSoftness
     }
     
     public init(from decoder: Decoder) throws {
@@ -134,10 +117,17 @@ public struct EnergyTunnelConfig: Codable {
         
         let edgeArray = try container.decode([Float].self, forKey: .edgeColor)
         edgeColor = SCNVector3(edgeArray[0], edgeArray[1], edgeArray[2])
+        
+        // New variables with decodeIfPresent for backwards compatibility
+        turbulenceFrequency = try container.decodeIfPresent(Float.self, forKey: .turbulenceFrequency) ?? 10.0
+        turbulenceAmplitude = try container.decodeIfPresent(Float.self, forKey: .turbulenceAmplitude) ?? 1.5
+        apexWarpMultiplier = try container.decodeIfPresent(Float.self, forKey: .apexWarpMultiplier) ?? 4.0
+        apexSoftness = try container.decodeIfPresent(Float.self, forKey: .apexSoftness) ?? 0.9
     }
     
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        
         try container.encode(particlesPerUnitLength, forKey: .particlesPerUnitLength)
         try container.encode(tunnelRadiusBase, forKey: .tunnelRadiusBase)
         try container.encode(particleBaseSize, forKey: .particleBaseSize)
@@ -153,6 +143,12 @@ public struct EnergyTunnelConfig: Codable {
         try container.encode([Float(coreColor.x), Float(coreColor.y), Float(coreColor.z)], forKey: .coreColor)
         try container.encode([Float(midColor.x), Float(midColor.y), Float(midColor.z)], forKey: .midColor)
         try container.encode([Float(edgeColor.x), Float(edgeColor.y), Float(edgeColor.z)], forKey: .edgeColor)
+        
+        // Encode new variables
+        try container.encode(turbulenceFrequency, forKey: .turbulenceFrequency)
+        try container.encode(turbulenceAmplitude, forKey: .turbulenceAmplitude)
+        try container.encode(apexWarpMultiplier, forKey: .apexWarpMultiplier)
+        try container.encode(apexSoftness, forKey: .apexSoftness)
     }
 }
 
