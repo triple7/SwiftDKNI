@@ -49,7 +49,7 @@ extension CMEGeometryBuilder {
             solarRadius: Float,
             config: EnergyTunnelConfig = EnergyTunnelConfig()
         ) -> SCNNode {
-                            
+                                
             let validLines = lines
             
             // 1. PRE-CALCULATE DYNAMIC PARTICLE COUNTS
@@ -250,6 +250,9 @@ extension CMEGeometryBuilder {
                 material.setValue(NSValue(scnVector3: config.coreColor), forKey: "u_coreColor")
                 material.setValue(NSValue(scnVector3: config.midColor), forKey: "u_midColor")
                 material.setValue(NSValue(scnVector3: config.edgeColor), forKey: "u_edgeColor")
+                
+                // --- NEW: Injecting the Dying Color ---
+                material.setValue(NSValue(scnVector3: config.dyingColor), forKey: "u_dyingColor")
                 
                 material.setValue(NSNumber(value: config.hdrMultiplier), forKey: "u_hdrMultiplier")
                 

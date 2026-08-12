@@ -51,6 +51,7 @@ public struct EnergyTunnelConfig: Codable {
     public var coreColor: SCNVector3 = SCNVector3(1.0, 0.85, 0.0)
     public var midColor: SCNVector3 = SCNVector3(1.0, 0.35, 0.0)
     public var edgeColor: SCNVector3 = SCNVector3(0.4, 0.02, 0.0)
+    public var dyingColor: SCNVector3 = SCNVector3(0.5, 0.02, 0.0) // NEW: Cooling tail color
     
     public var hdrMultiplier: Float = 0.8
     
@@ -76,6 +77,7 @@ public struct EnergyTunnelConfig: Codable {
     public mutating func setCoreColor(_ value: SCNVector3) { self.coreColor = value }
     public mutating func setMidColor(_ value: SCNVector3) { self.midColor = value }
     public mutating func setEdgeColor(_ value: SCNVector3) { self.edgeColor = value }
+    public mutating func setDyingColor(_ value: SCNVector3) { self.dyingColor = value }
     
     public mutating func setHdrMultiplier(_ value: Float) { self.hdrMultiplier = value }
     
@@ -89,7 +91,7 @@ public struct EnergyTunnelConfig: Codable {
     enum CodingKeys: String, CodingKey {
         case particlesPerUnitLength, tunnelRadiusBase, particleBaseSize, particleVariance
         case warpIntensity, boilSpeed, twinkleSpeed
-        case coreColor, midColor, edgeColor
+        case coreColor, midColor, edgeColor, dyingColor
         case hdrMultiplier
         case turbulenceFrequency, turbulenceAmplitude, apexWarpMultiplier, apexSoftness
     }
@@ -118,6 +120,11 @@ public struct EnergyTunnelConfig: Codable {
         let edgeArray = try container.decode([Float].self, forKey: .edgeColor)
         edgeColor = SCNVector3(edgeArray[0], edgeArray[1], edgeArray[2])
         
+        // Decode dyingColor with decodeIfPresent for backwards compatibility
+        if let dyingArray = try container.decodeIfPresent([Float].self, forKey: .dyingColor) {
+            dyingColor = SCNVector3(dyingArray[0], dyingArray[1], dyingArray[2])
+        }
+        
         // New variables with decodeIfPresent for backwards compatibility
         turbulenceFrequency = try container.decodeIfPresent(Float.self, forKey: .turbulenceFrequency) ?? 10.0
         turbulenceAmplitude = try container.decodeIfPresent(Float.self, forKey: .turbulenceAmplitude) ?? 1.5
@@ -143,6 +150,7 @@ public struct EnergyTunnelConfig: Codable {
         try container.encode([Float(coreColor.x), Float(coreColor.y), Float(coreColor.z)], forKey: .coreColor)
         try container.encode([Float(midColor.x), Float(midColor.y), Float(midColor.z)], forKey: .midColor)
         try container.encode([Float(edgeColor.x), Float(edgeColor.y), Float(edgeColor.z)], forKey: .edgeColor)
+        try container.encode([Float(dyingColor.x), Float(dyingColor.y), Float(dyingColor.z)], forKey: .dyingColor)
         
         // Encode new variables
         try container.encode(turbulenceFrequency, forKey: .turbulenceFrequency)
@@ -151,8 +159,6 @@ public struct EnergyTunnelConfig: Codable {
         try container.encode(apexSoftness, forKey: .apexSoftness)
     }
 }
-
-import SceneKit
 
 public struct CMEConfig: Codable {
     // Timeline constraints
