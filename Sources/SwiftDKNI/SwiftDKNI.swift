@@ -768,10 +768,10 @@ extension SwiftDKNI {
 
     // Updates thermal node config
     public func updateThermalConfigToMaterial(config: StarThermalConfig, key: String, node: SCNNode) {
-            // Locate the specific node named "thermal"
-            guard let thermalNode = node.childNode(withName: "thermal", recursively: true),
+            // Locate the specific node named "thermalAtmosphere"
+            guard let thermalNode = node.childNode(withName: "thermalAtmosphere", recursively: true),
                   let material = thermalNode.geometry?.materials.first else {
-                print("Warning: Could not locate node named 'thermal' or its material.")
+                print("Warning: Could not locate node named 'thermalAtmosphere' or its material.")
                 return
             }
             

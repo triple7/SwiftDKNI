@@ -91,7 +91,7 @@ extension SwiftDKNI {
             thermalSphere.materials = [thermalMaterial]
             
             let thermalShellNode = SCNNode(geometry: thermalSphere)
-            thermalShellNode.name = "thermal"
+            thermalShellNode.name = "thermalAtmosphere"
             thermalShellNode.renderingOrder = 40
             
             print("--------------------------")
