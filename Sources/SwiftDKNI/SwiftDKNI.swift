@@ -724,6 +724,9 @@ extension SwiftDKNI {
         case "u_edgeColor":
             material.setValue(NSValue(scnVector3: config.edgeColor), forKey: key)
             
+        case "u_dyingColor": // Added for completeness, in case you bind it later
+            material.setValue(NSValue(scnVector3: config.dyingColor), forKey: key)
+            
         case "u_hdrMultiplier":
             var value = config.hdrMultiplier
             material.setValue(Data(bytes: &value, count: MemoryLayout<Float>.size), forKey: key)
@@ -749,6 +752,14 @@ extension SwiftDKNI {
             valueToSet = NSNumber(value: config.ejectionMultiplier)
         case "u_loopTime":
             valueToSet = NSNumber(value: Float(config.visualLoopDuration))
+        case "u_warpIntensity": // NEW: Added missing warp intensity key
+            valueToSet = NSNumber(value: config.warpIntensity)
+        case "u_coreColor": // Added in case you switch colors to use this function
+            valueToSet = NSValue(scnVector3: config.coreColor)
+        case "u_midColor": // Added in case you switch colors to use this function
+            valueToSet = NSValue(scnVector3: config.midColor)
+        case "u_edgeColor": // Added in case you switch colors to use this function
+            valueToSet = NSValue(scnVector3: config.edgeColor)
         default:
             print("Warning: Unrecognized uniform key '\(key)' for CMEConfig.")
             return
@@ -808,6 +819,16 @@ extension SwiftDKNI {
                 
             case "u_color":
                 material.setValue(NSValue(scnVector3: config.color), forKey: key)
+                
+            // --- NEW: Added missing blending and color keys ---
+            case "u_surfaceColorInfluence":
+                material.setValue(NSNumber(value: config.surfaceColorInfluence), forKey: key)
+                
+            case "u_deepColor":
+                material.setValue(NSValue(scnVector3: config.deepColor), forKey: key)
+                
+            case "u_hotColor":
+                material.setValue(NSValue(scnVector3: config.hotColor), forKey: key)
                 
             default:
                 print("Warning: Unrecognized uniform key '\(key)' for StarThermalConfig.")
