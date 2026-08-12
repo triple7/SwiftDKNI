@@ -214,7 +214,7 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             solarRadius: Float = 1.0,
             config: CMEConfig = CMEConfig()
         ) throws -> SCNNode {
-                
+                    
             let geometry = self.buildDONKICorrelatedCMECloud(
                 eventLatitude: Float(event.latitude ?? 0.0),
                 eventLongitude: Float(event.longitude ?? 0.0),
@@ -224,12 +224,12 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
                 pointCount: pointCount,
                 solarRadius: solarRadius
             )
-                
+                    
             let bound = CGFloat(solarRadius * 10.0)
             geometry.boundingBox = (min: SCNVector3(-bound, -bound, -bound), max: SCNVector3(bound, bound, bound))
-                
+                    
             let material = SCNMaterial()
-                
+                    
             // 🚨 Exactly mirroring the working Tunnels material structure
             material.lightingModel = .physicallyBased
             material.blendMode = .add
@@ -250,16 +250,16 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
             let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
             let geometryShaderURL = documentsURL.appendingPathComponent("stars/coronal_geometry.metal")
             let fragmentShaderURL = documentsURL.appendingPathComponent("stars/coronal_fragment.metal")
-                
+                    
             do {
                 let geometrySource = try String(contentsOf: geometryShaderURL, encoding: .utf8)
                 let fragmentSource = try String(contentsOf: fragmentShaderURL, encoding: .utf8)
-                    
+                        
                 material.shaderModifiers = [
                     .geometry: geometrySource,
                     .surface: fragmentSource
                 ]
-                
+                    
                 // --- INJECTED: Timeline & Scale Uniforms ---
                 material.setValue(NSNumber(value: solarRadius), forKey: "u_solarRadius")
                 material.setValue(NSNumber(value: Float(config.visualLoopDuration)), forKey: "u_loopTime")
@@ -267,22 +267,25 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
                 material.setValue(NSNumber(value: config.scnFrameTimeSnapshot), forKey: "u_scnFrameTimeSnapshot")
                 material.setValue(NSNumber(value: 0.0), forKey: "u_ignitionTime") // Default, can be overridden when fired
                 
+                // --- INJECTED: Deformation Uniform ---
+                material.setValue(NSNumber(value: config.warpIntensity), forKey: "u_warpIntensity")
+                    
                 // --- INJECTED: Dynamic Coronal Colors ---
                 material.setValue(NSValue(scnVector3: config.coreColor), forKey: "u_coreColor")
                 material.setValue(NSValue(scnVector3: config.midColor), forKey: "u_midColor")
                 material.setValue(NSValue(scnVector3: config.edgeColor), forKey: "u_edgeColor")
-                
+                    
             } catch {
                 print("CRITICAL: Failed to load CME shader files: \(error)")
                 material.shaderModifiers = [:]
             }
-                
+                    
             geometry.materials = [material]
-                
+                    
             let node = SCNNode(geometry: geometry)
             node.categoryBitMask = 4
             node.renderingOrder = 10
-                
+                    
             return node
         }
 
