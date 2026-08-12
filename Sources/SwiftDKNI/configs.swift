@@ -152,6 +152,8 @@ public struct EnergyTunnelConfig: Codable {
     }
 }
 
+import SceneKit
+
 public struct CMEConfig: Codable {
     // Timeline constraints
     public var visualLoopDuration: Double = 180.0
@@ -168,44 +170,88 @@ public struct CMEConfig: Codable {
     public var defaultSpeed: Float = 400.0
     public var defaultHalfAngle: Float = 20.0
     
+    // MARK: - Thermal Color Uniforms
+    public var coreColor: SCNVector3 = SCNVector3(1.0, 0.9, 0.7)  // White-hot
+    public var midColor: SCNVector3 = SCNVector3(1.0, 0.4, 0.0)   // Vibrant Orange-Red
+    public var edgeColor: SCNVector3 = SCNVector3(0.2, 0.0, 0.15) // Dark Magenta / Plasma edge
+    
     public init() {}
     
     // MARK: - Mutating Setters
     
-    public mutating func setVisualLoopDuration(_ value: Double) {
-        self.visualLoopDuration = value
+    public mutating func setVisualLoopDuration(_ value: Double) { self.visualLoopDuration = value }
+    public mutating func setGlobalTime(_ value: Float) { self.globalTime = value }
+    public mutating func setScnFrameTimeSnapshot(_ value: Float) { self.scnFrameTimeSnapshot = value }
+    
+    public mutating func setPointCount(_ value: Int) { self.pointCount = value }
+    public mutating func setWarpIntensity(_ value: Float) { self.warpIntensity = value }
+    public mutating func setThickness(_ value: Float) { self.thickness = value }
+    public mutating func setEjectionMultiplier(_ value: Float) { self.ejectionMultiplier = value }
+    
+    public mutating func setDefaultSpeed(_ value: Float) { self.defaultSpeed = value }
+    public mutating func setDefaultHalfAngle(_ value: Float) { self.defaultHalfAngle = value }
+    
+    public mutating func setCoreColor(_ value: SCNVector3) { self.coreColor = value }
+    public mutating func setMidColor(_ value: SCNVector3) { self.midColor = value }
+    public mutating func setEdgeColor(_ value: SCNVector3) { self.edgeColor = value }
+    
+    // MARK: - Codable Conformance
+    
+    enum CodingKeys: String, CodingKey {
+        case visualLoopDuration, globalTime, scnFrameTimeSnapshot
+        case pointCount, warpIntensity, thickness, ejectionMultiplier
+        case defaultSpeed, defaultHalfAngle
+        case coreColor, midColor, edgeColor
     }
     
-    public mutating func setGlobalTime(_ value: Float) {
-        self.globalTime = value
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        visualLoopDuration = try container.decodeIfPresent(Double.self, forKey: .visualLoopDuration) ?? 180.0
+        globalTime = try container.decodeIfPresent(Float.self, forKey: .globalTime) ?? -1.0
+        scnFrameTimeSnapshot = try container.decodeIfPresent(Float.self, forKey: .scnFrameTimeSnapshot) ?? 0.0
+        
+        pointCount = try container.decodeIfPresent(Int.self, forKey: .pointCount) ?? 200
+        warpIntensity = try container.decodeIfPresent(Float.self, forKey: .warpIntensity) ?? 0.025
+        thickness = try container.decodeIfPresent(Float.self, forKey: .thickness) ?? 0.3
+        ejectionMultiplier = try container.decodeIfPresent(Float.self, forKey: .ejectionMultiplier) ?? 1000.0
+        
+        defaultSpeed = try container.decodeIfPresent(Float.self, forKey: .defaultSpeed) ?? 400.0
+        defaultHalfAngle = try container.decodeIfPresent(Float.self, forKey: .defaultHalfAngle) ?? 20.0
+        
+        // Decode SCNVector3 as Float arrays with fallback defaults for backward compatibility
+        if let coreArray = try container.decodeIfPresent([Float].self, forKey: .coreColor) {
+            coreColor = SCNVector3(coreArray[0], coreArray[1], coreArray[2])
+        }
+        
+        if let midArray = try container.decodeIfPresent([Float].self, forKey: .midColor) {
+            midColor = SCNVector3(midArray[0], midArray[1], midArray[2])
+        }
+        
+        if let edgeArray = try container.decodeIfPresent([Float].self, forKey: .edgeColor) {
+            edgeColor = SCNVector3(edgeArray[0], edgeArray[1], edgeArray[2])
+        }
     }
     
-    public mutating func setScnFrameTimeSnapshot(_ value: Float) {
-        self.scnFrameTimeSnapshot = value
-    }
-    
-    public mutating func setPointCount(_ value: Int) {
-        self.pointCount = value
-    }
-    
-    public mutating func setWarpIntensity(_ value: Float) {
-        self.warpIntensity = value
-    }
-    
-    public mutating func setThickness(_ value: Float) {
-        self.thickness = value
-    }
-    
-    public mutating func setEjectionMultiplier(_ value: Float) {
-        self.ejectionMultiplier = value
-    }
-    
-    public mutating func setDefaultSpeed(_ value: Float) {
-        self.defaultSpeed = value
-    }
-    
-    public mutating func setDefaultHalfAngle(_ value: Float) {
-        self.defaultHalfAngle = value
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        
+        try container.encode(visualLoopDuration, forKey: .visualLoopDuration)
+        try container.encode(globalTime, forKey: .globalTime)
+        try container.encode(scnFrameTimeSnapshot, forKey: .scnFrameTimeSnapshot)
+        
+        try container.encode(pointCount, forKey: .pointCount)
+        try container.encode(warpIntensity, forKey: .warpIntensity)
+        try container.encode(thickness, forKey: .thickness)
+        try container.encode(ejectionMultiplier, forKey: .ejectionMultiplier)
+        
+        try container.encode(defaultSpeed, forKey: .defaultSpeed)
+        try container.encode(defaultHalfAngle, forKey: .defaultHalfAngle)
+        
+        // Encode SCNVector3 as Float arrays for safe serialization
+        try container.encode([Float(coreColor.x), Float(coreColor.y), Float(coreColor.z)], forKey: .coreColor)
+        try container.encode([Float(midColor.x), Float(midColor.y), Float(midColor.z)], forKey: .midColor)
+        try container.encode([Float(edgeColor.x), Float(edgeColor.y), Float(edgeColor.z)], forKey: .edgeColor)
     }
 }
 

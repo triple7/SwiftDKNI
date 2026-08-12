@@ -479,7 +479,8 @@ extension SwiftDKNI {
                         for: event,
                         openLines: openMagneticLines,
                         pointCount: cMEConfig.pointCount,
-                        solarRadius: Float(sphere.radius))
+                        solarRadius: Float(sphere.radius),
+                        config:  stellarConfig.cmeConfig)
 
                     //  ANTI-CULL OVERRIDE: Force a massive bounding box so SceneKit never deletes it
                     cmeNode.geometry?.boundingBox = (
