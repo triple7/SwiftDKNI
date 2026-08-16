@@ -219,39 +219,35 @@ extension SwiftDKNI {
         let depth = texture.depth
         let totalVoxels = width * height * depth
         
-        // Each voxel is RGBA32Float (4 floats = 16 bytes per voxel)
-        let bytesPerPixel = MemoryLayout<SIMD4<Float>>.size
-        let imageSize = totalVoxels * bytesPerPixel
-        var rawMemory = Data(count: imageSize)
+        // Allocate a strongly-typed SIMD4 array to completely bypass unsafe buffer casting errors
+        var voxelData = [SIMD4<Float>](repeating: .zero, count: totalVoxels)
+        let bytesPerRow = width * MemoryLayout<SIMD4<Float>>.stride
+        let bytesPerImage = bytesPerRow * height
         
-        rawMemory.withUnsafeMutableBytes { ptr in
+        voxelData.withUnsafeMutableBytes { ptr in
             let region = MTLRegionMake3D(0, 0, 0, width, height, depth)
-            texture.getBytes(ptr.baseAddress!, bytesPerRow: width * bytesPerPixel, bytesPerImage: width * height * bytesPerPixel, from: region, mipmapLevel: 0, slice: 0)
+            texture.getBytes(ptr.baseAddress!,
+                             bytesPerRow: bytesPerRow,
+                             bytesPerImage: bytesPerImage,
+                             from: region,
+                             mipmapLevel: 0,
+                             slice: 0)
         }
-        
-        let floatPtr = rawMemory.withUnsafeBytes { $0.bindMemory(to: Float.self) }
         
         var sumR: Float = 0, sumG: Float = 0, sumB: Float = 0, sumA: Float = 0
         var minA: Float = Float.greatestFiniteMagnitude, maxA: Float = -Float.greatestFiniteMagnitude
         var nonZeroCount = 0
         
-        // Step through the flat buffer (4 floats per voxel: R, G, B, A)
-        let stride = 4
-        for i in stride(from: 0, to: floatPtr.count, by: stride) {
-            let r = floatPtr[i]
-            let g = floatPtr[i+1]
-            let b = floatPtr[i+2]
-            let a = floatPtr[i+3]
+        for voxel in voxelData {
+            sumR += voxel.x
+            sumG += voxel.y
+            sumB += voxel.z
+            sumA += voxel.w
             
-            sumR += r
-            sumG += g
-            sumB += b
-            sumA += a
-            
-            if a > 0.0001 {
+            if voxel.w > 0.0001 {
                 nonZeroCount += 1
-                minA = min(minA, a)
-                maxA = max(maxA, a)
+                minA = min(minA, voxel.w)
+                maxA = max(maxA, voxel.w)
             }
         }
         
@@ -263,22 +259,23 @@ extension SwiftDKNI {
         
         // Second pass for Standard Deviation (Sigma) on Alpha / Weight
         var varianceA: Float = 0
-        for i in stride(from: 3, to: floatPtr.count, by: stride) {
-            let a = floatPtr[i]
-            let diff = a - meanA
+        for voxel in voxelData {
+            let diff = voxel.w - meanA
             varianceA += diff * diff
         }
         let sigmaA = sqrt(varianceA / voxelCountFloat)
         
+        let populatedPercentage = (Float(nonZeroCount) / voxelCountFloat) * 100.0
+        
         print("""
         ==================================================
-        📊 VOXEL TEXTURE STATISTICAL AUDIT ($\mu$ & $\sigma$)
+        VOXEL TEXTURE STATISTICAL AUDIT (Mean & Sigma)
         ==================================================
         Total Volume Pixels   : \(totalVoxels)
-        Populated Voxels (A>0): \(nonZeroCount) (\(String(format: "%.1f", Float(nonZeroCount) / Float(totalVoxels) * 100))%)
+        Populated Voxels (A>0): \(nonZeroCount) (\(String(format: "%.1f", populatedPercentage))%)
         Mean RGB Vector       : [\(String(format: "%.4f", meanR)), \(String(format: "%.4f", meanG)), \(String(format: "%.4f", meanB))]
-        Alpha Mean ($\mu$)    : \(String(format: "%.4f", meanA))
-        Alpha StdDev ($\sigma$) : \(String(format: "%.4f", sigmaA))
+        Alpha Mean (mu)       : \(String(format: "%.4f", meanA))
+        Alpha StdDev (sigma)  : \(String(format: "%.4f", sigmaA))
         Alpha Min / Max       : \(String(format: "%.4f", minA)) / \(String(format: "%.4f", maxA))
         ==================================================
         """)
@@ -417,10 +414,11 @@ extension SwiftDKNI {
                 resolution: resolution
             )
             
-            self.debugAnalyzeMagneticTexture(volumeResult.texture)
+            self.debugAnalyzeMagneticTexture(volumeResult.texture!)
             return volumeResult.texture
         }
 
+    
     /// Fetches, generates, and time-aligns all CME events into a single container node.
     /// - Parameters:
     ///   - sphere: The central SCNSphere whose radius dictates the starting boundary.
