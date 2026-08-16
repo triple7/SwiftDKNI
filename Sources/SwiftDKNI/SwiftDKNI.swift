@@ -213,6 +213,77 @@ extension SwiftDKNI {
         }
     
 
+    public func debugAnalyzeMagneticTexture(_ texture: MTLTexture) {
+        let width = texture.width
+        let height = texture.height
+        let depth = texture.depth
+        let totalVoxels = width * height * depth
+        
+        // Each voxel is RGBA32Float (4 floats = 16 bytes per voxel)
+        let bytesPerPixel = MemoryLayout<SIMD4<Float>>.size
+        let imageSize = totalVoxels * bytesPerPixel
+        var rawMemory = Data(count: imageSize)
+        
+        rawMemory.withUnsafeMutableBytes { ptr in
+            let region = MTLRegionMake3D(0, 0, 0, width, height, depth)
+            texture.getBytes(ptr.baseAddress!, bytesPerRow: width * bytesPerPixel, bytesPerImage: width * height * bytesPerPixel, from: region, mipmapLevel: 0, slice: 0)
+        }
+        
+        let floatPtr = rawMemory.withUnsafeBytes { $0.bindMemory(to: Float.self) }
+        
+        var sumR: Float = 0, sumG: Float = 0, sumB: Float = 0, sumA: Float = 0
+        var minA: Float = Float.greatestFiniteMagnitude, maxA: Float = -Float.greatestFiniteMagnitude
+        var nonZeroCount = 0
+        
+        // Step through the flat buffer (4 floats per voxel: R, G, B, A)
+        let stride = 4
+        for i in stride(from: 0, to: floatPtr.count, by: stride) {
+            let r = floatPtr[i]
+            let g = floatPtr[i+1]
+            let b = floatPtr[i+2]
+            let a = floatPtr[i+3]
+            
+            sumR += r
+            sumG += g
+            sumB += b
+            sumA += a
+            
+            if a > 0.0001 {
+                nonZeroCount += 1
+                minA = min(minA, a)
+                maxA = max(maxA, a)
+            }
+        }
+        
+        let voxelCountFloat = Float(totalVoxels)
+        let meanR = sumR / voxelCountFloat
+        let meanG = sumG / voxelCountFloat
+        let meanB = sumB / voxelCountFloat
+        let meanA = sumA / voxelCountFloat
+        
+        // Second pass for Standard Deviation (Sigma) on Alpha / Weight
+        var varianceA: Float = 0
+        for i in stride(from: 3, to: floatPtr.count, by: stride) {
+            let a = floatPtr[i]
+            let diff = a - meanA
+            varianceA += diff * diff
+        }
+        let sigmaA = sqrt(varianceA / voxelCountFloat)
+        
+        print("""
+        ==================================================
+        📊 VOXEL TEXTURE STATISTICAL AUDIT ($\mu$ & $\sigma$)
+        ==================================================
+        Total Volume Pixels   : \(totalVoxels)
+        Populated Voxels (A>0): \(nonZeroCount) (\(String(format: "%.1f", Float(nonZeroCount) / Float(totalVoxels) * 100))%)
+        Mean RGB Vector       : [\(String(format: "%.4f", meanR)), \(String(format: "%.4f", meanG)), \(String(format: "%.4f", meanB))]
+        Alpha Mean ($\mu$)    : \(String(format: "%.4f", meanA))
+        Alpha StdDev ($\sigma$) : \(String(format: "%.4f", sigmaA))
+        Alpha Min / Max       : \(String(format: "%.4f", minA)) / \(String(format: "%.4f", maxA))
+        ==================================================
+        """)
+    }
+
     /// Generates a 3D Voxel Texture (sharedMagneticVolume) from FITS and SDO data.
         public func generateSharedMagneticVolume(
             device: MTLDevice,
@@ -346,6 +417,7 @@ extension SwiftDKNI {
                 resolution: resolution
             )
             
+            self.debugAnalyzeMagneticTexture(volumeResult.texture)
             return volumeResult.texture
         }
 
