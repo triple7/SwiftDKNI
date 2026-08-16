@@ -265,7 +265,7 @@ public final class CMEGeometryBuilder: @unchecked Sendable {
                 material.setValue(NSNumber(value: Float(config.visualLoopDuration)), forKey: "u_loopTime")
                 material.setValue(NSNumber(value: config.globalTime), forKey: "u_globalTime")
                 material.setValue(NSNumber(value: config.scnFrameTimeSnapshot), forKey: "u_scnFrameTimeSnapshot")
-                material.setValue(NSNumber(value: 0.0), forKey: "u_ignitionTime") // Default, can be overridden when fired
+                material.setValue(NSNumber(value: Float(0.0)), forKey: "u_ignitionTime") // Default, can be overridden when fired
                 
                 // --- INJECTED: Deformation Uniform ---
                 material.setValue(NSNumber(value: config.warpIntensity), forKey: "u_warpIntensity")

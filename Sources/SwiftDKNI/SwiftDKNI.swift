@@ -623,20 +623,26 @@ extension SwiftDKNI {
                         min: SCNVector3(-50.0, -50.0, -50.0),
                         max: SCNVector3(50.0, 50.0, 50.0)
                     )
-                    
                     if let material = cmeNode.geometry?.materials.first {
                         let scnLoopTimeCME = Float(visualLoopDuration)
-                        let scnIgnitionTime = safeIgnitionTime.truncatingRemainder(dividingBy: scnLoopTimeCME)
+                        let scnIgnitionTime = Float(safeIgnitionTime.truncatingRemainder(dividingBy: scnLoopTimeCME))
                                     
+                        print("scnIgnitionTime: \(scnIgnitionTime)")
+                        print("scnLoopTimeCME: \(scnLoopTimeCME)")
+                        print("cMEConfig.scnFrameTimeSnapshot: \(cMEConfig.scnFrameTimeSnapshot)")
+                        print("cMEConfig.globalTime: \(cMEConfig.globalTime)")
                         // Event timeline
-                        material.setValue(NSNumber(value: scnIgnitionTime), forKey: "u_ignitionTime")
+                        material.setValue(NSNumber(value: Float(scnIgnitionTime)), forKey: "u_ignitionTime")
                         material.setValue(NSNumber(value: scnLoopTimeCME), forKey: "u_loopTime")
-                        material.setValue(NSNumber(value: cMEConfig.scnFrameTimeSnapshot), forKey: "u_scnFrameTimeSnapshot")
+//                        material.setValue(NSNumber(value: cMEConfig.scnFrameTimeSnapshot), forKey: "u_scnFrameTimeSnapshot")
+                        material.setValue(NSNumber(value: Float(0.0)), forKey: "u_scnFrameTimeSnapshot")
 
                         // 🚨 BIND IMMEDIATELY: Ensure the timeline variables are never left unbound
                         material.setValue(NSNumber(value: cMEConfig.globalTime), forKey: "u_globalTime")
                         material.setValue(NSNumber(value: sRadius), forKey: "u_solarRadius")
                         material.setValue(NSNumber(value: cMEConfig.thickness), forKey: "u_thickness")
+                        material.setValue(NSNumber(value: cMEConfig.emissionBoostLower), forKey: "u_emissionBoostLower")
+                        material.setValue(NSNumber(value: cMEConfig.emissionBoostUpper), forKey: "u_emissionBoostUpper")
                                     
                         // Scaling of the event speed into scn units is done inside the metal geometry shader
                         let rawSpeed = Float(event.speed) ?? cMEConfig.defaultSpeed
@@ -886,6 +892,12 @@ extension SwiftDKNI {
             valueToSet = NSNumber(value: config.thickness)
         case "u_ejectionMultiplier":
             valueToSet = NSNumber(value: config.ejectionMultiplier)
+        case "u_loopTime":
+            valueToSet = NSNumber(value: Float(config.visualLoopDuration))
+        case "u_emissionBoostLower":
+            valueToSet = NSNumber(value: Float(config.emissionBoostLower))
+        case "u_emissionBoostUpper":
+            valueToSet = NSNumber(value: Float(config.emissionBoostUpper))
         case "u_loopTime":
             valueToSet = NSNumber(value: Float(config.visualLoopDuration))
         case "u_warpIntensity": // NEW: Added missing warp intensity key

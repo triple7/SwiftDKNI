@@ -88,7 +88,7 @@ public struct EnergyTunnelConfig: Codable {
     
     // MARK: - Codable Conformance
     
-    enum CodingKeys: String, CodingKey {
+    public enum CodingKeys: String, CodingKey, CaseIterable{
         case particlesPerUnitLength, tunnelRadiusBase, particleBaseSize, particleVariance
         case warpIntensity, boilSpeed, twinkleSpeed
         case coreColor, midColor, edgeColor, dyingColor
@@ -181,6 +181,8 @@ public struct CMEConfig: Codable {
     public var midColor: SCNVector3 = SCNVector3(1.0, 0.4, 0.0)   // Vibrant Orange-Red
     public var edgeColor: SCNVector3 = SCNVector3(0.2, 0.0, 0.15) // Dark Magenta / Plasma edge
     
+    public var emissionBoostLower: Float = 2.0
+    public var emissionBoostUpper: Float = 15.0
     public init() {}
     
     // MARK: - Mutating Setters
@@ -196,6 +198,8 @@ public struct CMEConfig: Codable {
     
     public mutating func setDefaultSpeed(_ value: Float) { self.defaultSpeed = value }
     public mutating func setDefaultHalfAngle(_ value: Float) { self.defaultHalfAngle = value }
+    public mutating func setEmissionBoostLower(_ value: Float) { self.emissionBoostLower = value }
+    public mutating func setEmissionBoostUpper(_ value: Float) { self.emissionBoostUpper = value }
     
     public mutating func setCoreColor(_ value: SCNVector3) { self.coreColor = value }
     public mutating func setMidColor(_ value: SCNVector3) { self.midColor = value }
@@ -203,10 +207,11 @@ public struct CMEConfig: Codable {
     
     // MARK: - Codable Conformance
     
-    enum CodingKeys: String, CodingKey {
+    public enum CodingKeys: String, CodingKey, CaseIterable{
         case visualLoopDuration, globalTime, scnFrameTimeSnapshot
         case pointCount, warpIntensity, thickness, ejectionMultiplier
         case defaultSpeed, defaultHalfAngle
+        case emissionBoostLower, emissionBoostUpper
         case coreColor, midColor, edgeColor
     }
     
@@ -225,6 +230,8 @@ public struct CMEConfig: Codable {
         defaultSpeed = try container.decodeIfPresent(Float.self, forKey: .defaultSpeed) ?? 400.0
         defaultHalfAngle = try container.decodeIfPresent(Float.self, forKey: .defaultHalfAngle) ?? 20.0
         
+        emissionBoostLower = try container.decodeIfPresent(Float.self, forKey: .emissionBoostLower) ?? 2.0
+        emissionBoostUpper = try container.decodeIfPresent(Float.self, forKey: .emissionBoostUpper) ?? 15.0
         // Decode SCNVector3 as Float arrays with fallback defaults for backward compatibility
         if let coreArray = try container.decodeIfPresent([Float].self, forKey: .coreColor) {
             coreColor = SCNVector3(coreArray[0], coreArray[1], coreArray[2])
@@ -253,6 +260,9 @@ public struct CMEConfig: Codable {
         
         try container.encode(defaultSpeed, forKey: .defaultSpeed)
         try container.encode(defaultHalfAngle, forKey: .defaultHalfAngle)
+        
+        try container.encode(emissionBoostLower, forKey: .emissionBoostLower)
+        try container.encode(emissionBoostUpper, forKey: .emissionBoostUpper)
         
         // Encode SCNVector3 as Float arrays for safe serialization
         try container.encode([Float(coreColor.x), Float(coreColor.y), Float(coreColor.z)], forKey: .coreColor)
@@ -304,7 +314,7 @@ public struct StarThermalConfig: Codable {
     
     // MARK: - Codable Conformance
     
-    enum CodingKeys: String, CodingKey {
+    public enum CodingKeys: String, CodingKey, CaseIterable{
         case warpIntensity, opacity, color, directionMultiplier
         case haloInner, haloOuter, maskMin, maskMax, contrastPower, minMultiplier, maxMultiplier
         case surfaceColorInfluence, deepColor, hotColor
