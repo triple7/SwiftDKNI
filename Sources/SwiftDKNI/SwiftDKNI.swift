@@ -282,13 +282,32 @@ extension SwiftDKNI {
     }
 
     /// Generates a 3D Voxel Texture (sharedMagneticVolume) from FITS and SDO data.
-        public func generateSharedMagneticVolume(
+    public func generateSharedMagneticVolume(
             device: MTLDevice,
             solarRadius: Float,
             resolution: Int = 64,
-            warpIntensity: Float = 1.0, // Adjust based on your StellarConfig defaults
+            warpIntensity: Float = 1.0,
             cachedIfExists: Bool = true
         ) async throws -> MTLTexture? {
+            
+            let fileName = "magnetic_volume_\(resolution)x\(resolution)x\(resolution).bin"
+            
+            // ---------------------------------------------------------
+            // STAGE 0: CHECK LOCAL DISK CACHE
+            // ---------------------------------------------------------
+            if cachedIfExists {
+                if let cachedTexture = load3DVoxelFromDisc(
+                    device: device,
+                    width: resolution,
+                    height: resolution,
+                    depth: resolution,
+                    pixelFormat: .rgba32Float,
+                    fileName: fileName
+                ) {
+                    print("✅ Successfully loaded 3D magnetic volume from local disk cache.")
+                    return cachedTexture
+                }
+            }
             
             // ---------------------------------------------------------
             // STAGE 1: CPU TOPOLOGICAL SAMPLER (AIA 193 Mask)
@@ -298,7 +317,7 @@ extension SwiftDKNI {
             var topologicalMap: [UInt8]? = nil
             var mapWidth = 0
             var mapHeight = 0
-            
+             
             if let coronalHoleMask = try? await sdoService.fetchLatestImage(wavelength: .aia193, resolution: 4096, cachedIfExists: cachedIfExists) {
                 
     #if os(macOS)
@@ -306,13 +325,13 @@ extension SwiftDKNI {
     #else
                 let extractedCGImage = coronalHoleMask.cgImage
     #endif
-                
+                 
                 if let cgImage = extractedCGImage {
                     mapWidth = cgImage.width
                     mapHeight = cgImage.height
                     let colorSpace = CGColorSpaceCreateDeviceGray()
                     var rawData = [UInt8](repeating: 0, count: mapWidth * mapHeight)
-                    
+                     
                     if let context = CGContext(data: &rawData, width: mapWidth, height: mapHeight, bitsPerComponent: 8, bytesPerRow: mapWidth, space: colorSpace, bitmapInfo: CGImageAlphaInfo.none.rawValue) {
                         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: mapWidth, height: mapHeight))
                         topologicalMap = rawData
@@ -320,63 +339,63 @@ extension SwiftDKNI {
                     }
                 }
             }
-            
+             
             // Reusable closure to mathematically warp a 3D point identically to the Metal shader
             let applyTopologicalWarp: (simd_float3) -> simd_float3 = { pos in
                 guard let map = topologicalMap, solarRadius > 0 else { return pos }
-                
+                 
                 let normalizedPos = normalize(pos)
                 let clampedY = max(-1.0, min(1.0, normalizedPos.y))
-                
+                 
                 let u = 0.5 + atan2(normalizedPos.z, normalizedPos.x) / (2.0 * Float.pi)
                 let v = 0.5 - asin(clampedY) / Float.pi
-                
+                 
                 let px = max(0, min(mapWidth - 1, Int(u * Float(mapWidth))))
                 let py = max(0, min(mapHeight - 1, Int(v * Float(mapHeight))))
-                
+                 
                 let activityLevel = Float(map[py * mapWidth + px]) / 255.0
-                
+                 
                 let sinLat = clampedY
                 let cosLat = sqrt(max(0.0, 1.0 - sinLat * sinLat))
                 let oblateness = cosLat * 0.015
-                
+                 
                 let magneticBulge = (activityLevel - 0.1) * warpIntensity
                 let totalDisplacement = (oblateness + magneticBulge) * solarRadius
-                
+                 
                 return pos + (normalizedPos * totalDisplacement)
             }
-            
+             
             // ---------------------------------------------------------
             // STAGE 2: FETCH & BUILD MAGNETIC LOOPS FROM FITS DATA
             // ---------------------------------------------------------
             print("Fetching FITS Magnetogram...")
             let magnetogramModeler = MagnetogramModeler()
-            
+             
             guard let fitsURL = try? await magnetogramModeler.fetchLatestSynopticMagnetogram(cachedIfExists: cachedIfExists),
                   let magData = try? magnetogramModeler.processFitsFile(at: fitsURL) else {
                 print("Warning: Failed to process FITS data for magnetic volume.")
                 return nil
             }
-            
+             
             // THE AMBIENT FIELD
             let rawMagneticBuckets = magnetogramModeler.exportRawBuckets(from: magData, thresholdGauss: 20.0)
-            
+             
             print("Generating Ambient 3D PFSS Vector Field...")
             let ambientPFSSArray = self.generateVolumetricFieldFromBuckets(
                 device: device,
                 buckets: rawMagneticBuckets,
                 solarRadius: solarRadius
             ).volumeData
-            
+             
             // THE GEOMETRY DEFORMATION
             var magneticLines = magnetogramModeler.calculateMagneticLoops(from: magData)
             let regionalFlows = self.extractMacroRegionalFlows(from: magneticLines)
-            
+             
             // Intercept splines on CPU to apply ambient field deformation & Solar Rotation
             magneticLines = magneticLines.map { line in
                 let warpedP0 = applyTopologicalWarp(line.p0)
                 let warpedP4 = applyTopologicalWarp(line.p4)
-                
+                 
                 var (newP0, newP1, newP2, newP3, newP4) = self.applyMagneticInfluenceToSpline(
                     p0: warpedP0,
                     p1: line.p1,
@@ -388,7 +407,7 @@ extension SwiftDKNI {
                     regionalFlows: regionalFlows,
                     solarRadius: solarRadius
                 )
-                
+                 
                 if line.isOpen {
                     newP1 = self.applySolarRotationShift(point: newP1, solarRadius: solarRadius)
                     newP2 = self.applySolarRotationShift(point: newP2, solarRadius: solarRadius)
@@ -399,10 +418,10 @@ extension SwiftDKNI {
                     newP2 = self.applySolarRotationShift(point: newP2, solarRadius: solarRadius, rotationRate: 0.25)
                     newP3 = self.applySolarRotationShift(point: newP3, solarRadius: solarRadius, rotationRate: 0.25)
                 }
-                
+                 
                 return MagneticLoopLine(p0: newP0, p1: newP1, p2: newP2, p3: newP3, p4: newP4, isOpen: line.isOpen, intensity: line.intensity)
             }
-            
+             
             // ---------------------------------------------------------
             // STAGE 3: FLOW FIELD RASTERIZATION
             // ---------------------------------------------------------
@@ -413,11 +432,18 @@ extension SwiftDKNI {
                 solarRadius: solarRadius,
                 resolution: resolution
             )
-            
+             
             self.debugAnalyzeMagneticTexture(volumeResult.texture!)
+            
+            // ---------------------------------------------------------
+            // STAGE 4: SAVE TO DISK CACHE
+            // ---------------------------------------------------------
+            if let texture = volumeResult.texture {
+                _ = saveVoxelCubeToDisc(texture: texture, fileName: fileName)
+            }
+            
             return volumeResult.texture
         }
-
     
     /// Fetches, generates, and time-aligns all CME events into a single container node.
     /// - Parameters:
