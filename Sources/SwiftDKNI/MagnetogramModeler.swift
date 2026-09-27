@@ -44,44 +44,72 @@ public final class MagnetogramModeler: @unchecked Sendable {
     // MARK: - 1. API Request
     
     public func fetchLatestSynopticMagnetogram(cachedIfExists: Bool = true) async throws -> URL {
-        let rotationNumber = 2270
-        let urlString = "http://jsoc.stanford.edu/data/hmi/synoptic/hmi.Synoptic_Mr.\(rotationNumber).fits"
-        
-        guard let url = URL(string: urlString) else {
-            throw URLError(.badURL)
-        }
-        
+
         let fileManager = FileManager.default
         let docsDir = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
         let starsDirectoryURL = docsDir.appendingPathComponent("stars")
-        let savedURL = starsDirectoryURL.appendingPathComponent("latest_magnetogram.fits")
-        
-        // 1. Check the local cache if requested
-        if cachedIfExists && fileManager.fileExists(atPath: savedURL.path) {
-            print("MagnetogramModeler: Loaded magnetogram from cache at \(savedURL.lastPathComponent)")
-            return savedURL
-        }
-        
-        // 2. Perform the Network Request if we don't have cached data
-        let (localURL, response) = try await URLSession.shared.download(from: url)
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-            throw URLError(.badServerResponse)
-        }
-        
-        // Ensure the 'stars' directory exists before moving the file
         if !fileManager.fileExists(atPath: starsDirectoryURL.path) {
             try fileManager.createDirectory(at: starsDirectoryURL, withIntermediateDirectories: true, attributes: nil)
         }
         
-        // Clean up any corrupted or old file at the exact path just in case
-        if fileManager.fileExists(atPath: savedURL.path) {
-            try fileManager.removeItem(at: savedURL)
+        // Get todays carrington number
+        let currentRotation = carringtonRotationNumber()
+        var lastError: Error = URLError(.badServerResponse)
+        
+        for rotationNumber in stride(from: currentRotation, through: currentRotation - 4, by: -1) {
+            let savedURL = starsDirectoryURL.appendingPathComponent("magnetogram_CR\(rotationNumber).fits")
+            
+            // 1. Check the local cache if requested
+            if cachedIfExists && fileManager.fileExists(atPath: savedURL.path) {
+                print("MagnetogramModeler: Loaded magnetogram from cache at \(savedURL.lastPathComponent)")
+                return savedURL
+            }
+            // TODO: Wonder if we can actually change to the small in app
+            // hmi.Synoptic_Mr_nrt.2315.fits - 20744640 bytes (20MB)
+            // hmi.Synoptic_Mr_small_nrt.2315.fits - 1045440 bytes (1MB)
+
+
+            // 2. Perform the Network Request if we don't have cached data
+            let urlString = "http://jsoc.stanford.edu/data/hmi/synoptic/hmi.Synoptic_Mr.\(rotationNumber).fits"
+            guard let url = URL(string: urlString) else { continue }
+            
+            do {
+                let (localURL, response) = try await URLSession.shared.download(from: url)
+                guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                    print("MagnetogramModeler: CR\(rotationNumber) not published yet, trying previous rotation.")
+                    continue
+                }
+                
+                // Clean up any corrupted or old file at the exact path just in case
+                if fileManager.fileExists(atPath: savedURL.path) {
+                    try fileManager.removeItem(at: savedURL)
+                }
+                
+                try fileManager.moveItem(at: localURL, to: savedURL)
+                print("MagnetogramModeler: Saved newly fetched magnetogram (CR\(rotationNumber)) to cache.")
+                
+                return savedURL
+            } catch {
+                lastError = error
+                print("MagnetogramModeler: CR\(rotationNumber) fetch failed: \(error.localizedDescription)")
+            }
         }
         
-        try fileManager.moveItem(at: localURL, to: savedURL)
-        print("MagnetogramModeler: Saved newly fetched magnetogram to cache.")
+        // Final fallback: any previously cached magnetogram, even an old one
+        if let cached = try? fileManager.contentsOfDirectory(at: starsDirectoryURL, includingPropertiesForKeys: nil)
+            .filter({ $0.lastPathComponent.hasPrefix("magnetogram_CR") && $0.pathExtension == "fits" })
+            .sorted(by: { $0.lastPathComponent > $1.lastPathComponent }).first {
+            print("MagnetogramModeler: Network unavailable, using stale cached magnetogram \(cached.lastPathComponent).")
+            return cached
+        }
+        // Legacy cache file from before rotation-stamped naming
+        let legacyURL = starsDirectoryURL.appendingPathComponent("latest_magnetogram.fits")
+        if fileManager.fileExists(atPath: legacyURL.path) {
+            print("MagnetogramModeler: Falling back to legacy cached magnetogram.")
+            return legacyURL
+        }
         
-        return savedURL
+        throw lastError
     }
     
     // MARK: - 2 & 3. FITS Parsing

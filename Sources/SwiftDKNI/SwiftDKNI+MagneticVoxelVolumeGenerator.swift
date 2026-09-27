@@ -345,6 +345,8 @@ extension SwiftDKNI {
             
             let vectorNode = SCNNode(geometry: vectorGeometry)
             return vectorNode
+        }else{
+            print("Magnetic vector field vertices is empty")
         }
         return SCNNode()
     }
@@ -538,30 +540,12 @@ extension SwiftDKNI {
         print("==================================================")
         
         // --- 5. BUILD METAL TEXTURE ---
-        let descriptor = MTLTextureDescriptor()
-        descriptor.textureType = .type3D
-        descriptor.pixelFormat = .rgba32Float
-        descriptor.width = resolution
-        descriptor.height = resolution
-        descriptor.depth = resolution
-        descriptor.usage = [.shaderRead]
-        
-        guard let texture = device.makeTexture(descriptor: descriptor) else {
+        // PERF: uploaded as rgba16Float (half precision) - halves the volume memory
+        // and speeds up trilinear sampling; direction/weight data doesn't need fp32.
+        guard let texture = makeHalfFloatVolumeTexture(device: device, volumeData: volumeData, resolution: resolution) else {
             print("DEBUG: ❌ Failed to allocate 3D texture memory on GPU.")
             return (volumeData, nil)
         }
-        
-        let bytesPerPixel = MemoryLayout<simd_float4>.stride
-        let bytesPerRow = bytesPerPixel * resolution
-        let bytesPerImage = bytesPerRow * resolution
-        
-        let region = MTLRegionMake3D(0, 0, 0, resolution, resolution, resolution)
-        texture.replace(region: region,
-                        mipmapLevel: 0,
-                        slice: 0,
-                        withBytes: volumeData,
-                        bytesPerRow: bytesPerRow,
-                        bytesPerImage: bytesPerImage)
         
         let end = CACurrentMediaTime()
         print("DEBUG: ✅ 3D Texture Successfully Generated and Bound to GPU in \(end - startVoxel) seconds.")
@@ -702,31 +686,55 @@ extension SwiftDKNI {
         }
         
         // --- 5. BUILD METAL TEXTURE ---
+        // PERF: uploaded as rgba16Float (half precision) - halves the volume memory
+        // and speeds up trilinear sampling; direction/weight data doesn't need fp32.
+        guard let texture = makeHalfFloatVolumeTexture(device: device, volumeData: finalData, resolution: resolution) else {
+            print("Failed to allocate 3D PFSS texture memory on GPU.")
+            return (finalData, nil)
+        }
+        
+        let end = CACurrentMediaTime()
+        print("generateVolumetricFieldFromBuckets: 3D boxel texture generated in \(end - startVolume) seconds.")
+        return (finalData, texture)
+    }
+    
+    /// Converts a CPU-side fp32 voxel array to half precision and uploads it as an
+    /// rgba16Float 3D texture. Shaders sample it identically (texture3d<float>).
+    internal func makeHalfFloatVolumeTexture(device: MTLDevice, volumeData: [simd_float4], resolution: Int) -> MTLTexture? {
         let descriptor = MTLTextureDescriptor()
         descriptor.textureType = .type3D
-        descriptor.pixelFormat = .rgba32Float
+        descriptor.pixelFormat = .rgba16Float
         descriptor.width = resolution
         descriptor.height = resolution
         descriptor.depth = resolution
         descriptor.usage = [.shaderRead]
         
-        guard let texture = device.makeTexture(descriptor: descriptor) else {
-            print("Failed to allocate 3D PFSS texture memory on GPU.")
-            return (finalData, nil)
+        guard let texture = device.makeTexture(descriptor: descriptor) else { return nil }
+        
+        // fp32 -> fp16 conversion
+        var halfData = [Float16](repeating: 0, count: volumeData.count * 4)
+        volumeData.withUnsafeBufferPointer { src in
+            for i in 0..<src.count {
+                let v = src[i]
+                halfData[i * 4]     = Float16(v.x)
+                halfData[i * 4 + 1] = Float16(v.y)
+                halfData[i * 4 + 2] = Float16(v.z)
+                halfData[i * 4 + 3] = Float16(v.w)
+            }
         }
         
-        let bytesPerRow = MemoryLayout<simd_float4>.stride * resolution
+        let bytesPerRow = MemoryLayout<Float16>.stride * 4 * resolution
         let bytesPerImage = bytesPerRow * resolution
         
-        texture.replace(region: MTLRegionMake3D(0, 0, 0, resolution, resolution, resolution),
-                        mipmapLevel: 0,
-                        slice: 0,
-                        withBytes: finalData,
-                        bytesPerRow: bytesPerRow,
-                        bytesPerImage: bytesPerImage)
+        halfData.withUnsafeBytes { ptr in
+            texture.replace(region: MTLRegionMake3D(0, 0, 0, resolution, resolution, resolution),
+                            mipmapLevel: 0,
+                            slice: 0,
+                            withBytes: ptr.baseAddress!,
+                            bytesPerRow: bytesPerRow,
+                            bytesPerImage: bytesPerImage)
+        }
         
-        let end = CACurrentMediaTime()
-        print("generateVolumetricFieldFromBuckets: 3D boxel texture generated in \(end - startVolume) seconds.")
-        return (finalData, texture)
+        return texture
     }
 }

@@ -36,6 +36,26 @@ public struct StellarConfig: Codable {
     public mutating func setThermalConfig(_ value: StarThermalConfig) {
         self.thermalConfig = value
     }
+    
+    // MARK: - Codable Conformance (custom so partial config JSONs still decode)
+    
+    public enum CodingKeys: String, CodingKey, CaseIterable {
+        case energyTunnelConfig, cmeConfig, thermalConfig
+    }
+    
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        energyTunnelConfig = try container.decodeIfPresent(EnergyTunnelConfig.self, forKey: .energyTunnelConfig) ?? EnergyTunnelConfig()
+        cmeConfig = try container.decodeIfPresent(CMEConfig.self, forKey: .cmeConfig) ?? CMEConfig()
+        thermalConfig = try container.decodeIfPresent(StarThermalConfig.self, forKey: .thermalConfig) ?? StarThermalConfig()
+    }
+    
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(energyTunnelConfig, forKey: .energyTunnelConfig)
+        try container.encode(cmeConfig, forKey: .cmeConfig)
+        try container.encode(thermalConfig, forKey: .thermalConfig)
+    }
 }
 
 public struct EnergyTunnelConfig: Codable {
