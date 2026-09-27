@@ -44,7 +44,8 @@ extension SwiftDKNI {
 
     private func applySolarSurfaceMaterials(
             to sphere: SCNSphere,
-            topologicalImage: Any?, // Accept the pre-fetched image directly
+            basePlasma: XImage?,   // equirectangular 171-band rotation composite
+            coronalHoles: XImage?, // equirectangular 193-band rotation composite, also drives the topological warp
             cachedIfExists: Bool = true
         ) async throws {
             // 1. Fetch the active regions
@@ -56,8 +57,8 @@ extension SwiftDKNI {
                   let baseMaterial = sphere.materials.first else {
                 return
             }
-            
-            sphere.segmentCount = 400
+            // TODO: Worth seeing what the effect on memory this segment count has
+            sphere.segmentCount = 256
             
             // --- PBR UPGRADE: Shift from .constant to .physicallyBased ---
             baseMaterial.lightingModel = .physicallyBased
@@ -72,72 +73,63 @@ extension SwiftDKNI {
             baseMaterial.specular.contents = UIColor.black
     #endif
 
-            let sdoService = NASASDOService()
-            
-            // --- DATA ROUTING ---
-            // LAYER 1: Core Surface Plasma (AIA 171) on Diffuse
-            if let liveSunTexture = try? await sdoService.fetchLatestImage(wavelength: .aia171, resolution: 4096, cachedIfExists: cachedIfExists) {
-                baseMaterial.diffuse.contents = liveSunTexture
+            // --- DATA ROUTING (equirectangular maps from the rotation composite) ---
+            // PERF: The 171+193 multi-band composite is baked ONCE on the CPU here instead
+            // of being recomputed per fragment every frame. The bake stores (193 + masked 171)/2
+            // so the full 0..2 additive range survives 8-bit quantization; the shader rescales by 2.
+            // The sunspot multiply stays per-fragment (ambient channel) to preserve exact visuals.
+            var bakedComposite: XImage? = nil
+            if let basePlasma = basePlasma, let coronalHoles = coronalHoles {
+                bakedComposite = bakeSolarSurfaceComposite(basePlasma: basePlasma, coronalHoles: coronalHoles)
             }
+            
+            // LAYER 1: Core Surface Plasma (171-band) on Diffuse
+            // (kept for the thermal shell's halo sampler; the surface shader blacks it out)
+            if let basePlasma = basePlasma {
+                baseMaterial.diffuse.contents = basePlasma
+            }
+            baseMaterial.diffuse.mipFilter = .linear // PERF: kill shimmer, save bandwidth
             
             // LAYER 2: NOAA Sunspot Mask on Ambient
             baseMaterial.ambient.contents = sunspotMask
+            baseMaterial.ambient.mipFilter = .linear
             
-            // LAYER 3: Coronal Holes (AIA 193) via Custom Uniform
-            if let live193Texture = try? await sdoService.fetchLatestImage(wavelength: .aia193, resolution: 4096, cachedIfExists: cachedIfExists) {
-                let textureProperty193 = SCNMaterialProperty(contents: live193Texture)
-                baseMaterial.setValue(textureProperty193, forKey: "u_texture193")
+            // LAYER 3: Baked 171+193 composite on Emission
+            if let bakedComposite = bakedComposite {
+                baseMaterial.emission.contents = bakedComposite
+            } else if let basePlasma = basePlasma {
+                // Degraded fallback if one band failed to load: uncomposited plasma
+                baseMaterial.emission.contents = basePlasma
             }
+            baseMaterial.emission.mipFilter = .linear
             
-            // --- SHADER: Multi-Band Atmosphere Composite ---
+            // --- SHADER: Atmosphere Haze over the Baked Composite ---
             let multiBandSolarShader = """
-                #pragma arguments
-                texture2d<float, access::sample> u_texture193;
-                
                 #pragma transparent
                 #pragma body
                 
-                constexpr sampler texSampler(coord::normalized, address::clamp_to_edge, filter::linear);
-                float2 uv = _surface.diffuseTexcoord;
+                // 1. The multi-band composite (193 base + masked 171 hot plasma) is pre-baked
+                // into the emission texture at half scale; it is sampled automatically with the
+                // geometry-warped UVs. Rescale back to the physical 0..2 range.
+                float3 compositeColor = _surface.emission.rgb * 2.0;
                 
-                // 1. Read the data streams
-                float4 color171 = _surface.diffuse;
-                float4 color193 = u_texture193.sample(texSampler, uv);
+                // 2. Multiplicative Sunspots: Punch true dark holes into the composite
                 float sunspotActivity = _surface.ambient.r;
-                
-                // 2. THE COMPOSITE MATH
-                // Base: 193 Angstroms (Preserves the dark coronal holes)
-                float3 compositeColor = color193.rgb;
-                
-                // Isolate 171: Calculate how bright the 171 pixel is
-                float luma171 = dot(color171.rgb, float3(0.299, 0.587, 0.114));
-                
-                // Mask 171: Only add 171 where it is intensely bright (the active loops)
-                // This prevents the 171 background from filling in the 193 coronal holes
-                float3 hotPlasma171 = color171.rgb * smoothstep(0.4, 0.8, luma171);
-                compositeColor += hotPlasma171;
-                
-                // Multiplicative Sunspots: Punch true dark holes into the composite
-                // If sunspotActivity is 1.0, we multiply the color by 0.05 (near black)
                 compositeColor *= (1.0 - (sunspotActivity * 0.95));
                 
                 // Ensure math doesn't drop below absolute zero
                 compositeColor = max(compositeColor, float3(0.0));
                 
                 // 3. Atmospheric Edge Haze
-                float4 uvBandSample = _surface.transparent;
-                float uvIntensity = dot(uvBandSample.rgb, float3(0.299, 0.587, 0.114));
-                
                 float3 N = normalize(_surface.normal);
                 float3 V = normalize(_surface.view);
                 float edgeFactor = 1.0 - max(0.0, dot(N, V));
                 
                 float atmosphericHaze = pow(edgeFactor, 6.0);
                 float3 atmosphereColor = float3(0.98, 0.90, 0.75); 
-                float finalAtmosphereOpacity = atmosphericHaze * (0.2 + uvIntensity * 0.8);
                 
                 // 4. Final Blend
-                float3 finalColor = mix(compositeColor, atmosphereColor, finalAtmosphereOpacity * 0.35);
+                float3 finalColor = mix(compositeColor, atmosphereColor, atmosphericHaze * 0.35);
                 
                 // 5. PBR COMPLIANCE: Route directly to emission and multiply for HDR bloom
                 float emissionBoost = 6.0; 
@@ -150,8 +142,8 @@ extension SwiftDKNI {
             // Apply the surface shader by default
             baseMaterial.shaderModifiers = [.surface: multiBandSolarShader]
             
-            // --- LAYER 4: Topological Warp ---
-            if let validImage = topologicalImage {
+            // --- LAYER 4: Topological Warp (193-band equirect map doubles as the activity map) ---
+            if let validImage = coronalHoles {
                 // 1. Create a standalone property (bypasses SceneKit alpha-sorting bug)
                 let topoProperty = SCNMaterialProperty(contents: validImage)
                 baseMaterial.setValue(topoProperty, forKey: "u_activeRegionMap")
@@ -219,6 +211,13 @@ extension SwiftDKNI {
         let depth = texture.depth
         let totalVoxels = width * height * depth
         
+        // NOTE: readback assumes rgba32Float; volumes are now uploaded as rgba16Float,
+        // so prefer debugAnalyzeMagneticVolume(_:) on the CPU-side data instead.
+        guard texture.pixelFormat == .rgba32Float else {
+            print("debugAnalyzeMagneticTexture: unsupported pixel format \(texture.pixelFormat.rawValue); use debugAnalyzeMagneticVolume(_:) instead.")
+            return
+        }
+        
         // Allocate a strongly-typed SIMD4 array to completely bypass unsafe buffer casting errors
         var voxelData = [SIMD4<Float>](repeating: .zero, count: totalVoxels)
         let bytesPerRow = width * MemoryLayout<SIMD4<Float>>.stride
@@ -234,6 +233,13 @@ extension SwiftDKNI {
                              slice: 0)
         }
         
+        debugAnalyzeMagneticVolume(voxelData)
+    }
+    
+    /// Statistical audit of a voxel volume from its CPU-side data (works regardless
+    /// of the GPU texture's pixel format).
+    public func debugAnalyzeMagneticVolume(_ voxelData: [SIMD4<Float>]) {
+        let totalVoxels = voxelData.count
         var sumR: Float = 0, sumG: Float = 0, sumB: Float = 0, sumA: Float = 0
         var minA: Float = Float.greatestFiniteMagnitude, maxA: Float = -Float.greatestFiniteMagnitude
         var nonZeroCount = 0
@@ -291,34 +297,18 @@ extension SwiftDKNI {
         ) async throws -> MTLTexture? {
             
             // ---------------------------------------------------------
-            // STAGE 1: CPU TOPOLOGICAL SAMPLER (AIA 193 Mask)
+            // STAGE 1: CPU TOPOLOGICAL SAMPLER (composited 193 equirect map)
             // ---------------------------------------------------------
-            print("Fetching AIA 193 image for CPU Topological Warping...")
-            let sdoService = NASASDOService()
+            print("Loading composited 193 map for CPU Topological Warping...")
             var topologicalMap: [UInt8]? = nil
             var mapWidth = 0
             var mapHeight = 0
             
-            if let coronalHoleMask = try? await sdoService.fetchLatestImage(wavelength: .aia193, resolution: 4096, cachedIfExists: cachedIfExists) {
-                
-    #if os(macOS)
-                let extractedCGImage = coronalHoleMask.cgImage(forProposedRect: nil, context: nil, hints: nil)
-    #else
-                let extractedCGImage = coronalHoleMask.cgImage
-    #endif
-                
-                if let cgImage = extractedCGImage {
-                    mapWidth = cgImage.width
-                    mapHeight = cgImage.height
-                    let colorSpace = CGColorSpaceCreateDeviceGray()
-                    var rawData = [UInt8](repeating: 0, count: mapWidth * mapHeight)
-                    
-                    if let context = CGContext(data: &rawData, width: mapWidth, height: mapHeight, bitsPerComponent: 8, bytesPerRow: mapWidth, space: colorSpace, bitmapInfo: CGImageAlphaInfo.none.rawValue) {
-                        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: mapWidth, height: mapHeight))
-                        topologicalMap = rawData
-                        print("✅ CPU Topological Map successfully loaded (\(mapWidth)x\(mapHeight))")
-                    }
-                }
+            if let textures = try? await carringtonCompositeSurfaceTextures(device: device, cachedIfExists: cachedIfExists) {
+                topologicalMap = textures.topologicalMap
+                mapWidth = textures.mapWidth
+                mapHeight = textures.mapHeight
+                print("✅ CPU Topological Map successfully loaded (\(mapWidth)x\(mapHeight))")
             }
             
             // Reusable closure to mathematically warp a 3D point identically to the Metal shader
@@ -414,7 +404,8 @@ extension SwiftDKNI {
                 resolution: resolution
             )
             
-            self.debugAnalyzeMagneticTexture(volumeResult.texture!)
+            // Analyze the CPU-side voxel array (format-independent, no force-unwrap)
+            self.debugAnalyzeMagneticVolume(volumeResult.volumeData)
             return volumeResult.texture
         }
 
@@ -434,8 +425,13 @@ extension SwiftDKNI {
             endTime: String,
             cachedIfExists: Bool = true,
             renderCME: Bool = true,
-            renderMagneticLoops: Bool = true,       // 🚨 NEW PARAMETER
-            renderThermalAtmosphere: Bool = true,   // 🚨 NEW PARAMETER
+            renderMagneticLoops: Bool = true,
+            renderMagneticField: Bool = true,
+            renderThermalAtmosphere: Bool = true,
+            hideCME: Bool = true,
+            hideMagneticLoops: Bool = true,
+            hideMagneticField: Bool = true,
+            hideThermalAtmosphere: Bool = true,
             stellarConfig: StellarConfig = StellarConfig()
         ) async throws -> SCNNode {
                         
@@ -491,39 +487,31 @@ extension SwiftDKNI {
             // 🚨 FIX: Sync this exactly with the GPU vertex shader to prevent loop separation
             let warpIntensity: Float = cMEConfig.warpIntensity
                         
-            // --- NEW: CPU TOPOLOGICAL SAMPLER ---
-            print("Fetching AIA 193 image for CPU Topological Warping...")
-            let sdoService = NASASDOService()
+            // --- SURFACE TEXTURES ---
+            // A full-surface mosaic of SDO disk exposures spanning the trailing solar
+            // rotation, so the far side is real observation up to ~27 days old rather
+            // than anything invented. Equirectangular and aligned with the magnetogram
+            // coordinate frame, plus the grayscale topological activity map consumed by
+            // the CPU warp below.
             var topologicalMap: [UInt8]? = nil
             var mapWidth = 0
             var mapHeight = 0
+            var basePlasmaImage: XImage? = nil
+            var coronalHolesImage: XImage? = nil
                         
-            // 🚨 FIX: Hoist the image reference so we can pass it down to the material builder later
-            var fetchedTopologicalImage: Any? = nil
+            print("Building full-surface rotation composite...")
+            if let textures = try? await carringtonCompositeSurfaceTextures(device: device, cachedIfExists: cachedIfExists) {
+                basePlasmaImage = textures.basePlasma
+                coronalHolesImage = textures.coronalHoles
+                topologicalMap = textures.topologicalMap
+                mapWidth = textures.mapWidth
+                mapHeight = textures.mapHeight
+            } else {
+                print("Warning: rotation composite failed; the sun will render without surface textures.")
+            }
                         
-            if let coronalHoleMask = try? await sdoService.fetchLatestImage(wavelength: .aia193, resolution: 4096, cachedIfExists: cachedIfExists) {
-                            
-                fetchedTopologicalImage = coronalHoleMask // Store it to avoid double-fetching
-                            
-                // FIX: Safely extract the CGImage depending on the OS architecture
-        #if os(macOS)
-                let extractedCGImage = coronalHoleMask.cgImage(forProposedRect: nil, context: nil, hints: nil)
-        #else
-                let extractedCGImage = coronalHoleMask.cgImage
-        #endif
-                            
-                if let cgImage = extractedCGImage {
-                    mapWidth = cgImage.width
-                    mapHeight = cgImage.height
-                    let colorSpace = CGColorSpaceCreateDeviceGray()
-                    var rawData = [UInt8](repeating: 0, count: mapWidth * mapHeight)
-                                
-                    if let context = CGContext(data: &rawData, width: mapWidth, height: mapHeight, bitsPerComponent: 8, bytesPerRow: mapWidth, space: colorSpace, bitmapInfo: CGImageAlphaInfo.none.rawValue) {
-                        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: mapWidth, height: mapHeight))
-                        topologicalMap = rawData
-                        print("✅ CPU Topological Map successfully loaded (\(mapWidth)x\(mapHeight))")
-                    }
-                }
+            if topologicalMap != nil {
+                print("✅ CPU Topological Map successfully loaded (\(mapWidth)x\(mapHeight))")
             }
                         
             // Reusable closure to mathematically warp a 3D point identically to the Metal shader
@@ -646,8 +634,17 @@ extension SwiftDKNI {
                             
                 // 🚨 CONDITIONALLY ADD MAGNETIC LOOPS
                 if renderMagneticLoops {
+                    globalMagneticNode.name = "globalMagneticNode"
+                    globalMagneticNode.isHidden = hideMagneticLoops
                     coronalSurfaceNode.addChildNode(globalMagneticNode)
                 }
+                
+                if renderMagneticField {
+                    magneticVectorField.name = "magneticVectorField"
+                    magneticVectorField.isHidden = hideMagneticField
+                    coronalSurfaceNode.addChildNode(magneticVectorField)
+                }
+                
             }
                         
             var firstIgnitionTime: Float? = nil
@@ -732,13 +729,14 @@ extension SwiftDKNI {
                     }
                     // Add CME prefix for filtering during material uniform changes
                     cmeNode.name = "CME_\(i)"
+                    cmeNode.isHidden = hideCME
                     coronalSurfaceNode.addChildNode(cmeNode)
                 }
             }
                         
             // 5. Apply Solar Surface Materials (NOAA + NASA SDO Composite)
-            // 🚨 FIX: Pass the securely hoisted topological image, eliminating the race condition
-            try await applySolarSurfaceMaterials(to: sphere, topologicalImage: fetchedTopologicalImage, cachedIfExists: cachedIfExists)
+            // Pass the equirectangular maps from the rotation composite
+            try await applySolarSurfaceMaterials(to: sphere, basePlasma: basePlasmaImage, coronalHoles: coronalHolesImage, cachedIfExists: cachedIfExists)
 
             // --- THERMAL DISTORTION SHELL
             // 🚨 CONDITIONALLY ADD THERMAL ATMOSPHERE
@@ -755,6 +753,7 @@ extension SwiftDKNI {
                         voxelCube: sharedMagneticVolume!,
                         config: stellarConfig.thermalConfig
                     )
+                    thermalShellNode.isHidden = hideThermalAtmosphere
                     coronalSurfaceNode.addChildNode(thermalShellNode)
                 }
             }
@@ -968,8 +967,6 @@ extension SwiftDKNI {
             valueToSet = NSNumber(value: Float(config.emissionBoostLower))
         case "u_emissionBoostUpper":
             valueToSet = NSNumber(value: Float(config.emissionBoostUpper))
-        case "u_loopTime":
-            valueToSet = NSNumber(value: Float(config.visualLoopDuration))
         case "u_warpIntensity": // NEW: Added missing warp intensity key
             valueToSet = NSNumber(value: config.warpIntensity)
         case "u_coreColor": // Added in case you switch colors to use this function
